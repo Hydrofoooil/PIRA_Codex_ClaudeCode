@@ -3,8 +3,6 @@
 PIRA is the public-facing name of PI, a personal agent for research, writing, coding, learning, and practical problem-solving.
 It is designed to be warm, honest about uncertainty, and evidence-first when evidence matters.
 
-This repository contains the policy and module system behind PIRA: the core identity, working principles, safety rules, and optional modules that shape how the agent behaves across different tasks.
-
 ## Get started
 
 1. Clone the repository:
@@ -89,11 +87,20 @@ PIRA is intentionally minimal by design.
 - **Practical.** It avoids complex features that are impressive in principle but often unnecessary in everyday research use.
 - **Tool-friendly.** Because the system is simple and text-based, it works naturally with official tools such as Codex.
 
+## Safety model
+
+PIRA can be used in a soft-safe full-permission mode, but it is not a sandbox. Its safety depends on explicit operating rules in `TOOLS.md`, including:
+
+- before any command that may write or change state, print a brief safety review covering action, scope, destructive risk, secrets/privacy impact, and rollback path when available;
+- prefer narrow, reversible actions;
+- avoid destructive commands without explicit permission;
+- keep temporary artifacts in the platform temp directory unless the user wants them preserved.
+
+Subagents should load the same bootstrap policy as the main agent (automatically handled by Codex but not tested on other agents).
+
 ## Tested compatibility
 
-PIRA has been tested extensively with **Codex using GPT-5.4 on high reasoning effort**.
-
-It has **not** been tested nearly as much with other models or tools yet. In principle, it should also work well with other systems that have comparable capability, strong instruction following, and reliable long-context behavior, but that broader compatibility is still an expectation rather than a validated claim.
+PIRA has been tested extensively with **Codex using GPT-5.4/5.5 on high reasoning effort**.
 
 ## What is in this repository
 
@@ -115,12 +122,7 @@ The public repository contains the shared policy framework.
 Personal context should stay local:
 - `USER.md` should remain private
 - each workspace can keep a local `AGENT_WORKBOOK.md`
-- secrets and sensitive information should never be committed
 
 ## Why the name PIRA
 
 PIRA stands for PI Research Assistant. It keeps the identity of PI while giving the project a clearer and more public-facing name.
-
-## Status
-
-This project is an actively used personal agent setup, now being cleaned up and presented in a more public-facing form.
