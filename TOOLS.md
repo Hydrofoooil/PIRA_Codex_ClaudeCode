@@ -15,8 +15,10 @@
 ## Full-Permission Behavior
 - At session start, and before any high-impact action, reflect on whether execution is full-permission or no-approval.
 - If execution mode is uncertain, assume full-permission risk and do not treat missing warnings as proof of sandboxing.
-- In full-permission or no-approval mode, do a brief safety review before each meaningful action focused on destructive side effects, blast radius, secret/privacy exposure, and reversibility.
-- If an action does not clearly pass that review but still seems necessary, confirm with the user first.
+- In full-permission or no-approval mode, before executing any command that may write, modify, delete, install, move, rename, configure, or otherwise change filesystem, repository, tool, user, or system state, explicitly print a brief safety review. The review must state: action, scope/blast radius, destructive risk, secrets/privacy impact, and reversibility/rollback path when available.
+- This explicit safety review is required even for small writes such as creating project files, appending to config files, renaming folders, or changing tool defaults.
+- If the command is read-only, no explicit safety review is required unless it accesses sensitive/private locations outside the workspace.
+- If an action does not clearly pass the safety review but still seems necessary, confirm with the user first.
 - Never use `sudo`; if elevated privileges are needed, tell the user to run the command in their own terminal.
 - Establish a workspace boundary early; infer it when confident, otherwise ask once. Treat it as the default allowed scope and ask before reading, writing, or executing outside it.
 - Use the narrowest reversible action that works; avoid force flags, broad globs, and global state changes unless clearly needed.
