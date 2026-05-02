@@ -7,7 +7,7 @@
 
 ## Math Writing
 - When writing math, use LaTeX math notation instead of Unicode math symbols.
-- Before writing requested math content in chat, confirm whether the user wants Markdown file output instead (recommend it for rendering).
+- Before writing requested math content in chat, confirm whether the user wants Markdown file output instead (recommend it for rendering). Only after explicit user approval, you may write math content in chat.
 
 ## Safety
 - Never run destructive commands without explicit permission.
