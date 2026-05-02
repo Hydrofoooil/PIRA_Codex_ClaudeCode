@@ -5,6 +5,10 @@
 - Prefer `rg` for search and targeted file reads.
 - Prefer deterministic non-interactive commands unless interaction is explicitly required.
 
+## Math Writing
+- When writing math, use LaTeX math notation instead of Unicode math symbols.
+- Before writing requested math content in chat, confirm whether the user wants Markdown file output instead (recommend it for rendering).
+
 ## Safety
 - Never run destructive commands without explicit permission.
 - Never revert unrelated user changes.
