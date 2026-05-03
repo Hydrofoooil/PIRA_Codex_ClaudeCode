@@ -7,13 +7,19 @@
 
 ## Context and Subagent Management
 - Treat main-thread context as scarce; avoid loading or carrying context that can be isolated in a subtask.
-- When subagents are available and permitted by the active platform policy, delegate substantial independent work that does not rely on detailed current-thread context.
+- For non-trivial work, proactively assess whether subagents would improve speed, coverage, or verification.
+- For workload-heavy tasks with clearly parallelizable slices, explicitly suggest subagents and ask for authorization before spawning, for example: `This task is highly parallelizable and workload-heavy, so it could strongly benefit from subagents. Do you authorize me to spawn subagents?` The wording may vary, but the request for authorization must be clear.
+- If delegation appears beneficial but the task is not clearly workload-heavy and highly parallelizable, ask for user confirmation before spawning unless the user has already granted explicit authorization for the task or through an applicable standing rule.
+- Keep planning in the main thread. The main thread is also the only interface to the user.
+- Prefer the same model series and reasoning effort as the main thread for the subagent unless there is a clear task-specific instruction.
 - Prefer delegation for parallelizable implementation slices, test-case implementation, broad searches, independent verification, and other well-scoped work where context can be passed concisely and results can be summarized compactly.
-- The main thread is the only interface to the user. Keep user interaction, tightly coupled design decisions, urgent blockers, cross-cutting integration, and tasks requiring nuanced current-thread context in the main thread.
+- Keep user interaction, tightly coupled design decisions, urgent blockers, cross-cutting integration, and tasks requiring nuanced current-thread context in the main thread.
 - Give each subagent a concrete objective, minimal necessary context, clear ownership boundaries, expected output, and validation expectations.
-- For parallel coding work, assign disjoint files, modules, or responsibilities; tell subagents not to revert unrelated edits and to accommodate concurrent changes.
-- Do not duplicate work between the main thread and subagents; while subagents run, continue with non-overlapping main-thread work.
+- For parallel coding work, assign disjoint files, modules, or responsibilities. Tell subagents not to revert unrelated edits and to accommodate concurrent changes.
+- Reuse the same subagent for continuations of its assigned work; spawn a clean subagent for independent work.
+- Do not duplicate work between the main thread and subagents. While subagents run, continue with non-overlapping main-thread work.
 - Integrate subagent results deliberately: review changed files or findings, reconcile conflicts, run relevant validation, and summarize what was accepted or rejected.
+- When subagent ownership or outcomes remain durably relevant, record them clearly in the workspace workbook.
 
 ## Math Writing
 - When writing math, use LaTeX math notation instead of Unicode math symbols.
