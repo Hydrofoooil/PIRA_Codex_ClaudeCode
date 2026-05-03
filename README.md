@@ -133,7 +133,7 @@ If PIRA materially assists a research project, please disclose that assistance w
 
 Suggested disclosure text:
 
-> This paper was assisted by PIRA~\citep{pira}, a research-assistant system powered by {concrete model series, such as GPT 5.5}. The assistance included [brainstorming / implementation assistance / writing polish / ...]. The authors are fully responsible for the presented final content.
+> This paper was assisted by PIRA~\citep{pira}, a research-assistant agent powered by {concrete model series, such as GPT 5.5}. The assistance included [brainstorming / implementation assistance / writing polish / ...]. The authors are fully responsible for the presented final content.
 
 Suggested BibTeX entry:
 

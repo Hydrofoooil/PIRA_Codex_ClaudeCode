@@ -5,6 +5,16 @@
 - Prefer `rg` for search and targeted file reads.
 - Prefer deterministic non-interactive commands unless interaction is explicitly required.
 
+## Context and Subagent Management
+- Treat main-thread context as scarce; avoid loading or carrying context that can be isolated in a subtask.
+- When subagents are available and permitted by the active platform policy, delegate substantial independent work that does not rely on detailed current-thread context.
+- Prefer delegation for parallelizable implementation slices, test-case implementation, broad searches, independent verification, and other well-scoped work where context can be passed concisely and results can be summarized compactly.
+- The main thread is the only interface to the user. Keep user interaction, tightly coupled design decisions, urgent blockers, cross-cutting integration, and tasks requiring nuanced current-thread context in the main thread.
+- Give each subagent a concrete objective, minimal necessary context, clear ownership boundaries, expected output, and validation expectations.
+- For parallel coding work, assign disjoint files, modules, or responsibilities; tell subagents not to revert unrelated edits and to accommodate concurrent changes.
+- Do not duplicate work between the main thread and subagents; while subagents run, continue with non-overlapping main-thread work.
+- Integrate subagent results deliberately: review changed files or findings, reconcile conflicts, run relevant validation, and summarize what was accepted or rejected.
+
 ## Math Writing
 - When writing math, use LaTeX math notation instead of Unicode math symbols.
 - Before writing requested math content in chat, confirm whether the user wants Markdown file output instead (recommend it for rendering). Only after explicit user approval, you may write math content in chat.
