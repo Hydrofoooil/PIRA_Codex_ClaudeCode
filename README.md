@@ -126,3 +126,24 @@ Personal context should stay local:
 ## Why the name PIRA
 
 PIRA stands for PI Research Assistant. It keeps the identity of PI while giving the project a clearer and more public-facing name.
+
+## Acknowledgement and citation
+
+If PIRA materially assists a research project, please disclose that assistance where appropriate, such as in an acknowledgement, LLM-use disclosure, or reproducibility checklist, and cite this repository. Adapt the scope of assistance to what was actually used, and include the actual model/version or reasoning setting if your venue asks for that level of detail.
+
+Suggested disclosure text:
+
+> This paper was assisted by PIRA~\citep{pira}, a research-assistant system powered by {concrete model series, such as GPT 5.5}. The assistance included [brainstorming / implementation assistance / writing polish / ...]. The authors are fully responsible for the presented final content.
+
+Suggested BibTeX entry:
+
+```bibtex
+@misc{pira,
+  author = {{PIRA Project}},
+  title = {{PIRA}: {PI} Research Assistant},
+  year = {2026},
+  howpublished = {\url{https://github.com/AlgebraLoveme/PIRA}}
+}
+```
+
+PIRA should be acknowledged as tool assistance, not as scientific authorship.
