@@ -69,7 +69,7 @@ This speech notification guide is only for **Codex running on macOS or Windows**
 During installation, the setup agent should ask whether to enable speech notification mode only when the detected platform is Codex on macOS or Windows. This is optional and should remain off unless the user explicitly opts in.
 
 Behavior:
-- say `PIRA started` when launching Codex through the optional startup wrapper;
+- say `PIRA online` when launching Codex through the optional startup wrapper;
 - say `PIRA finished` when a turn completes normally and Codex does not appear to be the focused app;
 - always say `PIRA standing by` when Codex needs user confirmation, approval, or another user action.
 
