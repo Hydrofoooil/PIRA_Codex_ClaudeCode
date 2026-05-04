@@ -2,8 +2,9 @@
 # Install optional Codex speech notifications for macOS.
 #
 # This script avoids Python and other non-default dependencies. It creates
-# non-blocking Bash hooks and updates a Codex config.toml so future Codex turns
-# say either "Pyra finished." or "Pyra waiting for action." using macOS `say`.
+# non-blocking Bash hooks, updates a Codex config.toml so future Codex turns say
+# either "Pyra finished." or "Pyra waiting for action.", and optionally installs
+# a zsh wrapper so starting Codex says "Pyra online.".
 #
 # Example:
 #   bash ~/agent/assets/setup_codex_audio_mode.sh \
@@ -15,19 +16,27 @@ set -euo pipefail
 START="# BEGIN PIRA Codex speech notifications"
 END="# END PIRA Codex speech notifications"
 VOICE="Samantha"
+STARTUP_MESSAGE="Pyra online."
+INSTALL_STARTUP_WRAPPER=1
 FORCE=0
 SAY_CMD=""
 CONFIG=""
+ZSHRC="$HOME/.zshrc"
+STARTUP_START="# BEGIN PIRA Codex startup audio"
+STARTUP_END="# END PIRA Codex startup audio"
 
 usage() {
   cat <<'EOF'
-Usage: setup_codex_audio_mode.sh --say-cmd PATH --config PATH [--voice NAME] [--force]
+Usage: setup_codex_audio_mode.sh --say-cmd PATH --config PATH [--zshrc PATH] [--no-startup-wrapper] [--voice NAME] [--startup-message TEXT] [--force]
 
 Options:
-  --say-cmd PATH   Path to macOS say command, usually /usr/bin/say.
-  --config PATH    Path to Codex config.toml, usually ~/.codex/config.toml.
-  --voice NAME     macOS voice name to use. Default: Samantha.
-  --force          Replace an existing top-level notify entry after backing up config.
+  --say-cmd PATH          Path to macOS say command, usually /usr/bin/say.
+  --config PATH           Path to Codex config.toml, usually ~/.codex/config.toml.
+  --zshrc PATH            Path to zsh config for the startup wrapper. Default: ~/.zshrc.
+  --no-startup-wrapper    Install completion/waiting notifications only.
+  --voice NAME            macOS voice name to use. Default: Samantha.
+  --startup-message TEXT  Startup phrase. Default: Pyra online.
+  --force                 Replace an existing top-level notify entry after backing up config.
 EOF
 }
 
@@ -49,6 +58,12 @@ toml_basic_string() {
   printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')"
 }
 
+
+shell_double_quote() {
+  # Print a double-quoted zsh string literal.
+  printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\$/\\$/g; s/`/\\`/g')"
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --say-cmd)
@@ -61,9 +76,23 @@ while [ "$#" -gt 0 ]; do
       CONFIG="$(expand_path "$2")"
       shift 2
       ;;
+    --zshrc)
+      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+      ZSHRC="$(expand_path "$2")"
+      shift 2
+      ;;
+    --no-startup-wrapper)
+      INSTALL_STARTUP_WRAPPER=0
+      shift
+      ;;
     --voice)
       [ "$#" -ge 2 ] || { usage >&2; exit 2; }
       VOICE="$2"
+      shift 2
+      ;;
+    --startup-message)
+      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+      STARTUP_MESSAGE="$2"
       shift 2
       ;;
     --force)
@@ -251,11 +280,43 @@ HOOK_EOF
 
 cp "$TMP2" "$CONFIG"
 
+ZSHRC_BACKUP=""
+if [ "$INSTALL_STARTUP_WRAPPER" -eq 1 ]; then
+  mkdir -p "$(dirname "$ZSHRC")"
+  [ -f "$ZSHRC" ] || : > "$ZSHRC"
+  ZSHRC_BACKUP="$ZSHRC.bak.$(date +%Y%m%d-%H%M%S)"
+  cp "$ZSHRC" "$ZSHRC_BACKUP"
+  STARTUP_TMP="$(mktemp)"
+  trap 'rm -f "$TMP1" "$TMP2" "$TMP3" "$STARTUP_TMP"' EXIT
+  awk -v start="$STARTUP_START" -v end="$STARTUP_END" '
+    index($0, start) { skip=1; next }
+    index($0, end) { skip=0; next }
+    !skip { print }
+  ' "$ZSHRC" > "$STARTUP_TMP"
+  cat >> "$STARTUP_TMP" <<STARTUP_EOF
+
+$STARTUP_START
+# Speak a short status message when starting Codex from an interactive zsh shell.
+codex() {
+  { $SAY_CMD -v $(shell_double_quote "$VOICE") $(shell_double_quote "$STARTUP_MESSAGE") >/dev/null 2>&1 &! } 2>/dev/null
+  command codex "\$@"
+}
+$STARTUP_END
+STARTUP_EOF
+  cp "$STARTUP_TMP" "$ZSHRC"
+  zsh -n "$ZSHRC"
+fi
+
 printf 'Codex speech notification mode installed.\n'
 printf 'Config: %s\n' "$CONFIG"
 printf 'Notify script: %s\n' "$NOTIFY_SCRIPT"
 printf 'Waiting hook: %s\n' "$WAITING_SCRIPT"
 if [ -n "$BACKUP" ]; then
-  printf 'Backup: %s\n' "$BACKUP"
+  printf 'Config backup: %s\n' "$BACKUP"
+fi
+if [ "$INSTALL_STARTUP_WRAPPER" -eq 1 ]; then
+  printf 'Startup wrapper installed in: %s\n' "$ZSHRC"
+  printf 'zsh config backup: %s\n' "$ZSHRC_BACKUP"
+  printf 'Run `source %s` or open a new terminal before starting Codex.\n' "$ZSHRC"
 fi
 printf 'Restart Codex to load the new notification settings.\n'

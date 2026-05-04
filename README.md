@@ -92,7 +92,7 @@ powershell.exe -ExecutionPolicy Bypass -File "$HOME\agent\assets\setup_codex_aud
   -ConfigPath "$HOME\.codex\config.toml"
 ```
 
-The macOS Bash script takes the path to the `say` command and the path to `config.toml`, then creates the needed hook scripts under the config directory, enables Codex hooks, sets top-level `notify`, and backs up the previous config. It avoids Python and `jq`; waiting-message detection uses best-effort pattern matching on Codex notification text.
+The macOS Bash script takes the path to the `say` command and the path to `config.toml`, then creates the needed hook scripts under the config directory, enables Codex hooks, sets top-level `notify`, backs up the previous config, and installs a zsh startup wrapper by default. The startup wrapper says `Pyra online.` when launching `codex`, uses `command codex "$@"` so normal Codex options continue to work, and uses zsh's `&!` background form to avoid printing job ids such as `[2] 54121`. Run `source ~/.zshrc` or open a new terminal after installing it. Use `--no-startup-wrapper` if only completion/waiting notifications should be installed. The script avoids Python and `jq`; waiting-message detection uses best-effort pattern matching on Codex notification text.
 
 The Windows PowerShell script takes the path to `config.toml`, creates PowerShell hook scripts under the config directory, uses built-in SAPI speech, enables Codex hooks, sets top-level `notify`, and backs up the previous config.
 
