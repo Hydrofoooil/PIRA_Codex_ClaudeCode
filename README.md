@@ -72,6 +72,9 @@ Behavior:
 - say `PIRA started` when launching Codex through the optional startup wrapper;
 - say `PIRA finished` when a turn completes normally;
 - say `PIRA waiting for action` when Codex needs user confirmation, approval, or another user action;
+
+The helper scripts may use platform-friendly phonetic speech strings such as `Pyra` or `Pira` so text-to-speech voices pronounce PIRA naturally instead of spelling out `P-I-R-A`.
+
 - preserve existing `notify` or hook configuration when possible;
 - back up `~/.codex/config.toml` before editing it.
 
