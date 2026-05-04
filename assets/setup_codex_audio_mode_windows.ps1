@@ -331,15 +331,11 @@ try {
     $message = ""
 }
 
-# Prefer explicit PI status markers; fall back to heuristics only for older or
-# unmarked sessions. If extraction fails, default to "finished" rather than
-# guessing from the full payload, which can contain the user's prompt text.
+# Match the macOS behavior: inspect only the final assistant message; if
+# extraction fails, default to "finished" rather than guessing from the full
+# payload, which can contain the user's prompt text.
 $waitingPattern = "\?|confirm|confirmation|approve|approval|permission|do you want|would you like|should i|shall i|may i|please confirm|please approve|waiting for|need your|needs your|reply|respond|choose|select|pick|can i|could i"
-if ($message -like "*pira_status:waiting*") {
-    Start-Speech $WaitingText -Rate 2 -Volume 85
-} elseif ($message -like "*pira_status:finished*") {
-    Start-Speech $FinishedText -Rate 1
-} elseif (-not [string]::IsNullOrWhiteSpace($message) -and $message -match $waitingPattern) {
+if (-not [string]::IsNullOrWhiteSpace($message) -and $message -match $waitingPattern) {
     Start-Speech $WaitingText -Rate 2 -Volume 85
 } else {
     Start-Speech $FinishedText -Rate 1

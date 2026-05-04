@@ -75,8 +75,6 @@ Behavior:
 
 The helper scripts may use platform-friendly phonetic speech strings such as `Pyra` or `Pira` so text-to-speech voices pronounce PIRA naturally instead of spelling out `P-I-R-A`.
 
-Notification status is marker-first. PI should end final responses with exactly one hidden marker, either `<!-- pira_status:waiting -->` when user action is needed or `<!-- pira_status:finished -->` when the turn is complete. The speech hooks prefer these markers and use heuristic matching only as a fallback for older sessions or unmarked messages.
-
 - preserve existing `notify` or hook configuration when possible;
 - back up `~/.codex/config.toml` before editing it.
 
