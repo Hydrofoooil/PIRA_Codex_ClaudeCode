@@ -33,7 +33,7 @@ Requirements:
 7. Configure the platform so `~/agent/AGENTS.md` is automatically loaded at the start of every session.
 8. If the platform is Codex on macOS, ask whether the user wants to enable Codex speech notification mode. Do not enable it by default, and do not present it as supported for non-Codex tools or non-macOS systems.
    - Explain that this macOS-only setup uses Codex config/hooks plus the built-in `say` command with the `Samantha` voice.
-   - If the user says yes, configure non-blocking speech notifications that say `Codex finished.` when a turn completes and `Codex waiting for action.` when Codex is waiting for user confirmation, approval, or another action.
+   - If the user says yes, configure non-blocking speech notifications that say `Pyra finished.` when a turn completes and `Pyra waiting for action.` when Codex is waiting for user confirmation, approval, or another action.
    - Preserve any existing Codex notification or hook configuration when possible, and back up files before editing user-level Codex config.
 9. Keep existing policy text unchanged unless compatibility requires edits.
 10. Verify setup and report exactly what changed, including verification-token consistency.
@@ -71,8 +71,8 @@ During installation, the setup agent should ask whether to enable speech notific
 The recommended setup uses the built-in `say` command with the `Samantha` voice. The notification should be non-blocking so Codex does not wait for the spoken phrase to finish.
 
 Behavior:
-- say `Codex finished.` when a turn completes normally;
-- say `Codex waiting for action.` when Codex needs user confirmation, approval, or another user action;
+- say `Pyra finished.` when a turn completes normally;
+- say `Pyra waiting for action.` when Codex needs user confirmation, approval, or another user action;
 - preserve existing `notify` or hook configuration when possible;
 - back up `~/.codex/config.toml` before editing it.
 

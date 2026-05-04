@@ -3,7 +3,7 @@
 #
 # This script avoids Python and other non-default dependencies. It creates
 # non-blocking Bash hooks and updates a Codex config.toml so future Codex turns
-# say either "Codex finished." or "Codex waiting for action." using macOS `say`.
+# say either "Pyra finished." or "Pyra waiting for action." using macOS `say`.
 #
 # Example:
 #   bash ~/agent/assets/setup_codex_audio_mode.sh \
@@ -131,8 +131,8 @@ cat > "$NOTIFY_SCRIPT" <<SH_EOF
 set -euo pipefail
 SAY_CMD=$(shell_quote "$SAY_CMD")
 VOICE=$(shell_quote "$VOICE")
-FINISHED='Codex finished.'
-WAITING='Codex waiting for action.'
+FINISHED='Pyra finished.'
+WAITING='Pyra waiting for action.'
 
 payload="\$*"
 if [ -z "\$payload" ]; then
@@ -174,7 +174,7 @@ cat > "$WAITING_SCRIPT" <<SH_EOF
 set -euo pipefail
 SAY_CMD=$(shell_quote "$SAY_CMD")
 VOICE=$(shell_quote "$VOICE")
-"\$SAY_CMD" -v "\$VOICE" 'Codex waiting for action.' >/dev/null 2>&1 &
+"\$SAY_CMD" -v "\$VOICE" 'Pyra waiting for action.' >/dev/null 2>&1 &
 printf '{}\n'
 SH_EOF
 chmod +x "$WAITING_SCRIPT"
