@@ -70,8 +70,10 @@ During installation, the setup agent should ask whether to enable speech notific
 
 Behavior:
 - say `PIRA started` when launching Codex through the optional startup wrapper;
-- say `PIRA finished` when a turn completes normally;
-- say `PIRA standing by` when Codex needs user confirmation, approval, or another user action;
+- say `PIRA finished` when a turn completes normally and Codex does not appear to be the focused app;
+- say `PIRA standing by` when Codex needs user confirmation, approval, or another user action and Codex does not appear to be the focused app;
+
+Focus detection is best-effort. On macOS the helper checks the frontmost app with `osascript`; on Windows it checks the foreground window process with built-in PowerShell/.NET calls. If the frontmost app is a known terminal or editor, including VS Code-like integrated-terminal hosts, the helper assumes the user may already be looking at Codex and stays quiet.
 
 The helper scripts may use platform-friendly phonetic speech strings such as `Pyra` or `Pira` so text-to-speech voices pronounce PIRA naturally instead of spelling out `P-I-R-A`.
 

@@ -4,8 +4,9 @@ Install optional Codex speech notifications for Windows.
 This script uses Windows built-in SAPI text-to-speech through PowerShell. It
 creates non-blocking PowerShell hooks and updates Codex config.toml so future
 Codex turns use Windows-friendly speech text: "Pira finished." or
-"Pira standing by.". By default it also installs a PowerShell
-profile wrapper that says "Pira online." when launching `codex`.
+"Pira standing by." when Codex does not appear focused. By default it also
+installs a PowerShell profile wrapper that says "Pira online." when launching
+`codex`.
 
 Example:
   powershell.exe -ExecutionPolicy Bypass -File "$HOME\agent\assets\setup_codex_audio_mode_windows.ps1" `
@@ -129,7 +130,7 @@ function Add-PermissionHook {
     $block = @"
 
 $StartMarker
-# Speak when Codex is waiting for approval/action.
+# Speak when Codex is waiting for approval/action, unless Codex appears focused.
 [[hooks.PermissionRequest]]
 matcher = "*"
 
@@ -137,7 +138,7 @@ matcher = "*"
 type = "command"
 command = $(ConvertTo-TomlBasicString $command)
 timeout = 1
-statusMessage = "Speaking waiting status"
+statusMessage = "Checking waiting status speech"
 $EndMarker
 "@
     return $Text + $block
@@ -290,12 +291,54 @@ function Quote-ProcessArg {
     '"' + $Value.Replace('\', '\\').Replace('"', '\"') + '"'
 }
 
+function Get-ForegroundProcessName {
+    try {
+        $typeDefinition = @"
+using System;
+using System.Runtime.InteropServices;
+public static class PiraForegroundWindow {
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+}
+"@
+        Add-Type -TypeDefinition $typeDefinition -ErrorAction SilentlyContinue | Out-Null
+        $processId = 0
+        $hwnd = [PiraForegroundWindow]::GetForegroundWindow()
+        if ($hwnd -eq [IntPtr]::Zero) { return "" }
+        [void][PiraForegroundWindow]::GetWindowThreadProcessId($hwnd, [ref]$processId)
+        if ($processId -eq 0) { return "" }
+        return (Get-Process -Id $processId -ErrorAction SilentlyContinue).ProcessName
+    } catch {
+        return ""
+    }
+}
+
+function Test-CodexUiSeemsFocused {
+    $processName = (Get-ForegroundProcessName).ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($processName)) { return $false }
+    return @(
+        "windowsterminal", "terminal", "wt", "powershell", "pwsh", "cmd",
+        "conhost", "wezterm-gui", "wezterm", "warp", "alacritty", "kitty",
+        "hyper", "tabby", "rio", "mintty", "conemu64", "conemu", "cmder",
+        "mobaxterm", "code", "code-insiders", "vscodium", "cursor", "windsurf",
+        "zed", "sublime_text", "notepad++", "notepad++64", "gvim", "neovide",
+        "emacs", "devenv", "idea64", "idea", "pycharm64", "pycharm",
+        "webstorm64", "webstorm", "clion64", "clion", "goland64", "goland",
+        "phpstorm64", "phpstorm", "rider64", "rider", "rubymine64", "rubymine",
+        "rustrover64", "rustrover", "datagrip64", "datagrip", "androidstudio64",
+        "studio64"
+    ) -contains $processName
+}
+
 function Start-Speech {
     param(
         [Parameter(Mandatory = $true)][string]$Text,
         [int]$Rate = 0,
         [int]$Volume = 100
     )
+    if (Test-CodexUiSeemsFocused) { return }
     $args = @(
         "-NoProfile",
         "-ExecutionPolicy", "Bypass",
@@ -356,18 +399,61 @@ function Quote-ProcessArg {
     '"' + $Value.Replace('\', '\\').Replace('"', '\"') + '"'
 }
 
-$args = @(
-    "-NoProfile",
-    "-ExecutionPolicy", "Bypass",
-    "-File", (Quote-ProcessArg $SayScript),
-    "-Text", (Quote-ProcessArg "Pira standing by."),
-    "-Rate", "2",
-    "-Volume", "85"
-)
-if (-not [string]::IsNullOrWhiteSpace($VoiceName)) {
-    $args += @("-VoiceName", (Quote-ProcessArg $VoiceName))
+function Get-ForegroundProcessName {
+    try {
+        $typeDefinition = @"
+using System;
+using System.Runtime.InteropServices;
+public static class PiraForegroundWindow {
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
 }
-Start-Process -FilePath __POWERSHELL_CMD__ -ArgumentList ($args -join " ") -WindowStyle Hidden | Out-Null
+"@
+        Add-Type -TypeDefinition $typeDefinition -ErrorAction SilentlyContinue | Out-Null
+        $processId = 0
+        $hwnd = [PiraForegroundWindow]::GetForegroundWindow()
+        if ($hwnd -eq [IntPtr]::Zero) { return "" }
+        [void][PiraForegroundWindow]::GetWindowThreadProcessId($hwnd, [ref]$processId)
+        if ($processId -eq 0) { return "" }
+        return (Get-Process -Id $processId -ErrorAction SilentlyContinue).ProcessName
+    } catch {
+        return ""
+    }
+}
+
+function Test-CodexUiSeemsFocused {
+    $processName = (Get-ForegroundProcessName).ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($processName)) { return $false }
+    return @(
+        "windowsterminal", "terminal", "wt", "powershell", "pwsh", "cmd",
+        "conhost", "wezterm-gui", "wezterm", "warp", "alacritty", "kitty",
+        "hyper", "tabby", "rio", "mintty", "conemu64", "conemu", "cmder",
+        "mobaxterm", "code", "code-insiders", "vscodium", "cursor", "windsurf",
+        "zed", "sublime_text", "notepad++", "notepad++64", "gvim", "neovide",
+        "emacs", "devenv", "idea64", "idea", "pycharm64", "pycharm",
+        "webstorm64", "webstorm", "clion64", "clion", "goland64", "goland",
+        "phpstorm64", "phpstorm", "rider64", "rider", "rubymine64", "rubymine",
+        "rustrover64", "rustrover", "datagrip64", "datagrip", "androidstudio64",
+        "studio64"
+    ) -contains $processName
+}
+
+if (-not (Test-CodexUiSeemsFocused)) {
+    $args = @(
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", (Quote-ProcessArg $SayScript),
+        "-Text", (Quote-ProcessArg "Pira standing by."),
+        "-Rate", "2",
+        "-Volume", "85"
+    )
+    if (-not [string]::IsNullOrWhiteSpace($VoiceName)) {
+        $args += @("-VoiceName", (Quote-ProcessArg $VoiceName))
+    }
+    Start-Process -FilePath __POWERSHELL_CMD__ -ArgumentList ($args -join " ") -WindowStyle Hidden | Out-Null
+}
 Write-Output "{}"
 '@
 $waitingContent = $waitingContent.Replace('__VOICE_NAME__', (ConvertTo-PowerShellSingleQuotedString $VoiceName))
