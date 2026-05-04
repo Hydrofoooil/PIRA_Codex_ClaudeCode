@@ -1,6 +1,6 @@
 # PIRA — PI Research Assistant
 
-PIRA is the public-facing name of PI, a personal agent for research, writing, coding, learning, and practical problem-solving.
+PIRA (pronounced "Pyra") is the public-facing name of PI, a personal agent for research, writing, coding, learning, and practical problem-solving.
 It is designed to be warm, honest about uncertainty, and evidence-first when evidence matters.
 
 ## Get started
