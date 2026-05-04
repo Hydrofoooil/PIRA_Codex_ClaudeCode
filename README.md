@@ -31,9 +31,12 @@ Requirements:
    - Safe approval mode: ask for approval for non-trusted or destructive actions by default.
    - Soft-safe mode (recommended for practical utility, but warn the user clearly): default to no per-command approval prompts, rely on PIRA's safety rules, and ask the user only when PIRA judges it necessary. Make clear that this does not provide hard protection, so it should be used with caution.
 7. Configure the platform so `~/agent/AGENTS.md` is automatically loaded at the start of every session.
-8. Keep existing policy text unchanged unless compatibility requires edits.
-9. Verify setup and report exactly what changed, including verification-token consistency.
-10. After setup, ask whether to run the optional comprehensive module-loading check in `~/agent/assets/MODULE_LOADING_CASES.md`; do not run it by default.
+8. If the platform is Codex on macOS, ask whether the user wants to enable Codex speech notification mode. Do not enable it by default, and do not present it as supported for non-Codex tools or non-macOS systems.
+   - Explain that this macOS-only setup uses Codex config/hooks plus the built-in `say` command with the `Samantha` voice.
+   - If the user says yes, configure non-blocking speech notifications that say `Codex finished.` when a turn completes and `Codex waiting for action.` when Codex is waiting for user confirmation, approval, or another action.
+   - Preserve any existing Codex notification or hook configuration when possible, and back up files before editing user-level Codex config.
+9. Keep existing policy text unchanged unless compatibility requires edits.
+10. Verify setup and report exactly what changed, including verification-token consistency.
 
 Verification checklist:
 - Confirm `~/agent/AGENTS.md` exists.
@@ -42,7 +45,6 @@ Verification checklist:
 - Confirm the policy supports per-workspace `AGENT_WORKBOOK.md` memory, does not require a global memory file for startup behavior, and removes files listed in `~/agent/assets/LEGACY_LIST.md` if found.
 - Start or describe a fresh-session check with only mandatory modules and confirm no load acknowledgement is printed.
 - In that fresh session, ask for the verification token and confirm it exactly matches `SOUL.md` (`31415926535897932384626433832795`).
-- Ask whether to run the optional comprehensive module-loading check in `~/agent/assets/MODULE_LOADING_CASES.md`. Run it only if the user says yes, then confirm the prompts report the correct optional instruction file paths under the current routing policy.
 
 For Codex specifically:
 - Update or create `~/.codex/config.toml` with:
@@ -51,6 +53,7 @@ For Codex specifically:
   - if the user chose Safe approval mode, set a conservative default approval policy/sandbox combination.
   - if the user chose Soft-safe mode, set `approval_policy = "never"` and `sandbox_mode = "danger-full-access"`.
 - Ensure `~/.codex/AGENTS.md` also points to `~/agent/AGENTS.md`.
+- If the user enabled speech notification mode on Codex for macOS, set it up as described in the Speech notifications guide below.
 
 Output format:
 - Changed files (absolute paths)
@@ -58,6 +61,32 @@ Output format:
 - Verification results
 - Any remaining manual step (if unavoidable)
 ```
+
+## Optional Codex speech notifications for macOS
+
+This speech notification guide is only for **Codex running on macOS**. It relies on Codex `notify`/hook configuration and macOS's built-in `say` command, so it should not be presented as supported for Claude Code, other agent tools, Linux, or Windows.
+
+During installation, the setup agent should ask whether to enable speech notification mode only when the detected platform is Codex on macOS. This is optional and should remain off unless the user explicitly opts in.
+
+The recommended setup uses the built-in `say` command with the `Samantha` voice. The notification should be non-blocking so Codex does not wait for the spoken phrase to finish.
+
+Behavior:
+- say `Codex finished.` when a turn completes normally;
+- say `Codex waiting for action.` when Codex needs user confirmation, approval, or another user action;
+- preserve existing `notify` or hook configuration when possible;
+- back up `~/.codex/config.toml` before editing it.
+
+Use the repository helper script rather than reconstructing the setup manually:
+
+```bash
+bash ~/agent/assets/setup_codex_audio_mode.sh \
+  --say-cmd /usr/bin/say \
+  --config ~/.codex/config.toml
+```
+
+The Bash script takes the path to the `say` command and the path to `config.toml`, then creates the needed hook scripts under the config directory, enables Codex hooks, sets top-level `notify`, and backs up the previous config. It avoids Python and `jq`; waiting-message detection uses best-effort pattern matching on Codex notification text. If `config.toml` already has a top-level `notify` entry, inspect it first and rerun with `--force` only after confirming it is acceptable to replace.
+
+Keep `notify` at the top level of `config.toml`, before any `[section]` table, so it is not accidentally parsed as part of a nested table. After changing Codex config, restart Codex to load the new notification settings.
 
 ## What PIRA is for
 
