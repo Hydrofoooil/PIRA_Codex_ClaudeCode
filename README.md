@@ -72,6 +72,7 @@ During installation, the setup agent should ask whether to enable speech notific
 On macOS, the recommended setup uses the built-in `say` command with the `Samantha` voice. On Windows, the recommended setup uses built-in SAPI text-to-speech through PowerShell. The notification should be non-blocking so Codex does not wait for the spoken phrase to finish.
 
 Behavior:
+- say `Pyra online.` when launching Codex through the optional macOS zsh startup wrapper;
 - say `Pyra finished.` when a turn completes normally;
 - say `Pyra waiting for action.` when Codex needs user confirmation, approval, or another user action;
 - preserve existing `notify` or hook configuration when possible;
