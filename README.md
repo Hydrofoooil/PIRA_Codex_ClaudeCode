@@ -33,7 +33,7 @@ Requirements:
 7. Configure the platform so `~/agent/AGENTS.md` is automatically loaded at the start of every session.
 8. If the platform is Codex on macOS or Windows, ask whether the user wants to enable Codex speech notification mode. Do not enable it by default, and do not present it as supported for non-Codex tools or other systems.
    - Explain that optional Codex speech notifications are available through the repository setup helpers.
-   - If the user says yes, configure non-blocking speech notifications for three events: `PIRA started`, `PIRA finished`, and `PIRA waiting for action`.
+   - If the user says yes, configure non-blocking speech notifications for three events: `PIRA started`, `PIRA finished`, and `PIRA standing by`.
    - Preserve any existing Codex notification or hook configuration when possible, and back up files before editing user-level Codex config.
 9. Keep existing policy text unchanged unless compatibility requires edits.
 10. Verify setup and report exactly what changed, including verification-token consistency.
@@ -71,9 +71,11 @@ During installation, the setup agent should ask whether to enable speech notific
 Behavior:
 - say `PIRA started` when launching Codex through the optional startup wrapper;
 - say `PIRA finished` when a turn completes normally;
-- say `PIRA waiting for action` when Codex needs user confirmation, approval, or another user action;
+- say `PIRA standing by` when Codex needs user confirmation, approval, or another user action;
 
 The helper scripts may use platform-friendly phonetic speech strings such as `Pyra` or `Pira` so text-to-speech voices pronounce PIRA naturally instead of spelling out `P-I-R-A`.
+
+Notification status is marker-first. PI should end final responses with exactly one hidden marker, either `<!-- pira_status:waiting -->` when user action is needed or `<!-- pira_status:finished -->` when the turn is complete. The speech hooks prefer these markers and use heuristic matching only as a fallback for older sessions or unmarked messages.
 
 - preserve existing `notify` or hook configuration when possible;
 - back up `~/.codex/config.toml` before editing it.

@@ -25,6 +25,12 @@
 - When writing math, use LaTeX math notation instead of Unicode math symbols.
 - Before writing requested math content in chat, confirm whether the user wants Markdown file output instead (recommend it for rendering). Only after explicit user approval, you may write math content in chat.
 
+## User Notification
+- When a final response requires user confirmation, approval, selection, or another user action before work can continue, include the hidden marker `<!-- pira_status:waiting -->` at the end of the response.
+- When a final response completes the requested work and does not require user action to proceed, include the hidden marker `<!-- pira_status:finished -->` at the end of the response.
+- Use exactly one `pira_status` marker per final response.
+- These markers are for notification tooling only; do not mention or explain them unless the user asks.
+
 ## Safety
 - Never run destructive commands without explicit permission.
 - Never revert unrelated user changes.

@@ -3,7 +3,7 @@
 #
 # This script avoids Python and other non-default dependencies. It creates
 # non-blocking Bash hooks, updates a Codex config.toml so future Codex turns say
-# either "Pyra finished." or "Pyra waiting for action.", and optionally installs
+# either "Pyra finished." or "Pyra standing by.", and optionally installs
 # a zsh wrapper so starting Codex says "Pyra online.".
 #
 # Example:
@@ -161,7 +161,7 @@ set -euo pipefail
 SAY_CMD=$(shell_quote "$SAY_CMD")
 VOICE=$(shell_quote "$VOICE")
 FINISHED='Pyra finished.'
-WAITING='Pyra waiting for action.'
+WAITING='Pyra standing by.'
 
 payload="\$*"
 if [ -z "\$payload" ]; then
@@ -187,9 +187,14 @@ extract_last_assistant_message() {
 
 message="\$(extract_last_assistant_message | head -n 1)"
 
-# If extraction fails, default to "finished" rather than guessing from the full
-# JSON payload. This avoids false "waiting" notifications from user prompt text.
-if [ -n "\$message" ] && printf '%s' "\$message" | grep -Eiq '\?|confirm|confirmation|approve|approval|permission|do you want|would you like|should i|shall i|may i|please confirm|please approve|waiting for|need your|needs your|reply|respond|choose|select|pick|can i|could i'; then
+# Prefer explicit PI status markers; fall back to heuristics only for older or
+# unmarked sessions. If extraction fails, default to "finished" rather than
+# guessing from the full JSON payload, which can contain the user's prompt text.
+if printf '%s' "\$message" | grep -Fq 'pira_status:waiting'; then
+  "\$SAY_CMD" -v "\$VOICE" "\$WAITING" >/dev/null 2>&1 &
+elif printf '%s' "\$message" | grep -Fq 'pira_status:finished'; then
+  "\$SAY_CMD" -v "\$VOICE" "\$FINISHED" >/dev/null 2>&1 &
+elif [ -n "\$message" ] && printf '%s' "\$message" | grep -Eiq '\?|confirm|confirmation|approve|approval|permission|do you want|would you like|should i|shall i|may i|please confirm|please approve|waiting for|need your|needs your|reply|respond|choose|select|pick|can i|could i'; then
   "\$SAY_CMD" -v "\$VOICE" "\$WAITING" >/dev/null 2>&1 &
 else
   "\$SAY_CMD" -v "\$VOICE" "\$FINISHED" >/dev/null 2>&1 &
@@ -203,7 +208,7 @@ cat > "$WAITING_SCRIPT" <<SH_EOF
 set -euo pipefail
 SAY_CMD=$(shell_quote "$SAY_CMD")
 VOICE=$(shell_quote "$VOICE")
-"\$SAY_CMD" -v "\$VOICE" 'Pyra waiting for action.' >/dev/null 2>&1 &
+"\$SAY_CMD" -v "\$VOICE" 'Pyra standing by.' >/dev/null 2>&1 &
 printf '{}\n'
 SH_EOF
 chmod +x "$WAITING_SCRIPT"

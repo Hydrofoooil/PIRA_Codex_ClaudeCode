@@ -4,7 +4,7 @@ Install optional Codex speech notifications for Windows.
 This script uses Windows built-in SAPI text-to-speech through PowerShell. It
 creates non-blocking PowerShell hooks and updates Codex config.toml so future
 Codex turns use Windows-friendly speech text: "Pira finished." or
-"Pira waiting for action.". By default it also installs a PowerShell
+"Pira standing by.". By default it also installs a PowerShell
 profile wrapper that says "Pira online." when launching `codex`.
 
 Example:
@@ -281,7 +281,7 @@ param([Parameter(ValueFromRemainingArguments = $true)][string[]]$ArgsFromCodex)
 
 $ErrorActionPreference = "SilentlyContinue"
 $FinishedText = "Pira finished."
-$WaitingText = "Pira waiting for action."
+$WaitingText = "Pira standing by."
 $VoiceName = __VOICE_NAME__
 $SayScript = Join-Path $PSScriptRoot "pira_say.ps1"
 
@@ -331,11 +331,15 @@ try {
     $message = ""
 }
 
-# Match the macOS behavior: inspect only the final assistant message; if
-# extraction fails, default to "finished" rather than guessing from the full
-# payload, which can contain the user's prompt text.
+# Prefer explicit PI status markers; fall back to heuristics only for older or
+# unmarked sessions. If extraction fails, default to "finished" rather than
+# guessing from the full payload, which can contain the user's prompt text.
 $waitingPattern = "\?|confirm|confirmation|approve|approval|permission|do you want|would you like|should i|shall i|may i|please confirm|please approve|waiting for|need your|needs your|reply|respond|choose|select|pick|can i|could i"
-if (-not [string]::IsNullOrWhiteSpace($message) -and $message -match $waitingPattern) {
+if ($message -like "*pira_status:waiting*") {
+    Start-Speech $WaitingText -Rate 2 -Volume 85
+} elseif ($message -like "*pira_status:finished*") {
+    Start-Speech $FinishedText -Rate 1
+} elseif (-not [string]::IsNullOrWhiteSpace($message) -and $message -match $waitingPattern) {
     Start-Speech $WaitingText -Rate 2 -Volume 85
 } else {
     Start-Speech $FinishedText -Rate 1
@@ -360,7 +364,7 @@ $args = @(
     "-NoProfile",
     "-ExecutionPolicy", "Bypass",
     "-File", (Quote-ProcessArg $SayScript),
-    "-Text", (Quote-ProcessArg "Pira waiting for action."),
+    "-Text", (Quote-ProcessArg "Pira standing by."),
     "-Rate", "2",
     "-Volume", "85"
 )
