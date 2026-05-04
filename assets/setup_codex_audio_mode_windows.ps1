@@ -2,11 +2,10 @@
 Install optional Codex speech notifications for Windows.
 
 This script uses Windows built-in SAPI text-to-speech through PowerShell. It
-creates non-blocking PowerShell hooks and updates Codex config.toml so future
-Codex turns use Windows-friendly speech text: "Pira finished." or
-"Pira standing by." when Codex does not appear focused. By default it also
-installs a PowerShell profile wrapper that says "Pira online." when launching
-`codex`.
+creates non-blocking PowerShell hooks and updates Codex config.toml so normal
+completion can say "Pira finished." and waiting states always say
+"Pira standing by." By default it also installs a PowerShell profile wrapper
+that says "Pira online." when launching `codex`.
 
 Example:
   powershell.exe -ExecutionPolicy Bypass -File "$HOME\agent\assets\setup_codex_audio_mode_windows.ps1" `
@@ -130,7 +129,7 @@ function Add-PermissionHook {
     $block = @"
 
 $StartMarker
-# Speak when Codex is waiting for approval/action, unless Codex appears focused.
+# Always speak when Codex is waiting for approval/action.
 [[hooks.PermissionRequest]]
 matcher = "*"
 
@@ -336,9 +335,10 @@ function Start-Speech {
     param(
         [Parameter(Mandatory = $true)][string]$Text,
         [int]$Rate = 0,
-        [int]$Volume = 100
+        [int]$Volume = 100,
+        [switch]$Always
     )
-    if (Test-CodexUiSeemsFocused) { return }
+    if (-not $Always -and (Test-CodexUiSeemsFocused)) { return }
     $args = @(
         "-NoProfile",
         "-ExecutionPolicy", "Bypass",
@@ -379,7 +379,7 @@ try {
 # payload, which can contain the user's prompt text.
 $waitingPattern = "\?|confirm|confirmation|approve|approval|permission|do you want|would you like|should i|shall i|may i|please confirm|please approve|waiting for|need your|needs your|reply|respond|choose|select|pick|can i|could i"
 if (-not [string]::IsNullOrWhiteSpace($message) -and $message -match $waitingPattern) {
-    Start-Speech $WaitingText -Rate 2 -Volume 85
+    Start-Speech $WaitingText -Rate 2 -Volume 85 -Always
 } else {
     Start-Speech $FinishedText -Rate 1
 }
@@ -389,7 +389,7 @@ $notifyContent = $notifyContent.Replace('__POWERSHELL_CMD__', (ConvertTo-PowerSh
 Write-Utf8NoBom $notifyScript $notifyContent
 
 $waitingContent = @'
-# Speak when Codex is waiting for user action, without blocking.
+# Always speak when Codex is waiting for user action, without blocking.
 $ErrorActionPreference = "SilentlyContinue"
 $SayScript = Join-Path $PSScriptRoot "pira_say.ps1"
 $VoiceName = __VOICE_NAME__
@@ -399,61 +399,18 @@ function Quote-ProcessArg {
     '"' + $Value.Replace('\', '\\').Replace('"', '\"') + '"'
 }
 
-function Get-ForegroundProcessName {
-    try {
-        $typeDefinition = @"
-using System;
-using System.Runtime.InteropServices;
-public static class PiraForegroundWindow {
-    [DllImport("user32.dll")]
-    public static extern IntPtr GetForegroundWindow();
-    [DllImport("user32.dll")]
-    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+$args = @(
+    "-NoProfile",
+    "-ExecutionPolicy", "Bypass",
+    "-File", (Quote-ProcessArg $SayScript),
+    "-Text", (Quote-ProcessArg "Pira standing by."),
+    "-Rate", "2",
+    "-Volume", "85"
+)
+if (-not [string]::IsNullOrWhiteSpace($VoiceName)) {
+    $args += @("-VoiceName", (Quote-ProcessArg $VoiceName))
 }
-"@
-        Add-Type -TypeDefinition $typeDefinition -ErrorAction SilentlyContinue | Out-Null
-        $processId = 0
-        $hwnd = [PiraForegroundWindow]::GetForegroundWindow()
-        if ($hwnd -eq [IntPtr]::Zero) { return "" }
-        [void][PiraForegroundWindow]::GetWindowThreadProcessId($hwnd, [ref]$processId)
-        if ($processId -eq 0) { return "" }
-        return (Get-Process -Id $processId -ErrorAction SilentlyContinue).ProcessName
-    } catch {
-        return ""
-    }
-}
-
-function Test-CodexUiSeemsFocused {
-    $processName = (Get-ForegroundProcessName).ToLowerInvariant()
-    if ([string]::IsNullOrWhiteSpace($processName)) { return $false }
-    return @(
-        "windowsterminal", "terminal", "wt", "powershell", "pwsh", "cmd",
-        "conhost", "wezterm-gui", "wezterm", "warp", "alacritty", "kitty",
-        "hyper", "tabby", "rio", "mintty", "conemu64", "conemu", "cmder",
-        "mobaxterm", "code", "code-insiders", "vscodium", "cursor", "windsurf",
-        "zed", "sublime_text", "notepad++", "notepad++64", "gvim", "neovide",
-        "emacs", "devenv", "idea64", "idea", "pycharm64", "pycharm",
-        "webstorm64", "webstorm", "clion64", "clion", "goland64", "goland",
-        "phpstorm64", "phpstorm", "rider64", "rider", "rubymine64", "rubymine",
-        "rustrover64", "rustrover", "datagrip64", "datagrip", "androidstudio64",
-        "studio64"
-    ) -contains $processName
-}
-
-if (-not (Test-CodexUiSeemsFocused)) {
-    $args = @(
-        "-NoProfile",
-        "-ExecutionPolicy", "Bypass",
-        "-File", (Quote-ProcessArg $SayScript),
-        "-Text", (Quote-ProcessArg "Pira standing by."),
-        "-Rate", "2",
-        "-Volume", "85"
-    )
-    if (-not [string]::IsNullOrWhiteSpace($VoiceName)) {
-        $args += @("-VoiceName", (Quote-ProcessArg $VoiceName))
-    }
-    Start-Process -FilePath __POWERSHELL_CMD__ -ArgumentList ($args -join " ") -WindowStyle Hidden | Out-Null
-}
+Start-Process -FilePath __POWERSHELL_CMD__ -ArgumentList ($args -join " ") -WindowStyle Hidden | Out-Null
 Write-Output "{}"
 '@
 $waitingContent = $waitingContent.Replace('__VOICE_NAME__', (ConvertTo-PowerShellSingleQuotedString $VoiceName))

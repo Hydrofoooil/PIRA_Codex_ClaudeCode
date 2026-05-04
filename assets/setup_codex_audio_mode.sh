@@ -2,9 +2,9 @@
 # Install optional Codex speech notifications for macOS.
 #
 # This script avoids Python and other non-default dependencies. It creates
-# non-blocking Bash hooks, updates a Codex config.toml so future Codex turns say
-# either "Pyra finished." or "Pyra standing by.", and optionally installs
-# a zsh wrapper so starting Codex says "Pyra online.".
+# non-blocking Bash hooks, updates Codex config.toml so normal completion can
+# say "Pyra finished." and waiting states always say "Pyra standing by.", and
+# optionally installs a zsh wrapper so starting Codex says "Pyra online.".
 #
 # Example:
 #   bash ~/agent/assets/setup_codex_audio_mode.sh \
@@ -218,6 +218,11 @@ speak_unless_focused() {
   "\$SAY_CMD" -v "\$VOICE" "\$text" >/dev/null 2>&1 &
 }
 
+speak_always() {
+  text="\$1"
+  "\$SAY_CMD" -v "\$VOICE" "\$text" >/dev/null 2>&1 &
+}
+
 json_unescape_minimal() {
   sed -e 's/\\\\"/"/g' \\
       -e 's/\\\\n/ /g' \\
@@ -240,7 +245,7 @@ message="\$(extract_last_assistant_message | head -n 1)"
 # If extraction fails, default to "finished" rather than guessing from the full
 # JSON payload. This avoids false "waiting" notifications from user prompt text.
 if [ -n "\$message" ] && printf '%s' "\$message" | grep -Eiq '\?|confirm|confirmation|approve|approval|permission|do you want|would you like|should i|shall i|may i|please confirm|please approve|waiting for|need your|needs your|reply|respond|choose|select|pick|can i|could i'; then
-  speak_unless_focused "\$WAITING"
+  speak_always "\$WAITING"
 else
   speak_unless_focused "\$FINISHED"
 fi
@@ -249,54 +254,11 @@ chmod +x "$NOTIFY_SCRIPT"
 
 cat > "$WAITING_SCRIPT" <<SH_EOF
 #!/usr/bin/env bash
-# Speak when Codex is waiting for user action, without blocking.
+# Always speak when Codex is waiting for user action, without blocking.
 set -euo pipefail
 SAY_CMD=$(shell_quote "$SAY_CMD")
 VOICE=$(shell_quote "$VOICE")
-frontmost_identity() {
-  osascript <<'OSA' 2>/dev/null || true
-tell application "System Events"
-  set p to first application process whose frontmost is true
-  set n to name of p
-  set bid to ""
-  try
-    set bid to bundle identifier of p
-  end try
-  set uid to ""
-  try
-    set uid to unix id of p as text
-  end try
-  return n & linefeed & bid & linefeed & uid
-end tell
-OSA
-}
-
-codex_ui_seems_focused() {
-  # Best-effort focus check: if a terminal/editor app is frontmost, assume the
-  # user may already be looking at Codex and avoid redundant speech. Some apps,
-  # especially VS Code-like Electron builds, may report their process name as
-  # "Electron", so we also inspect bundle id and process command/path.
-  identity="\$(frontmost_identity)"
-  [ -n "\$identity" ] || return 1
-  pid="\$(printf '%s\n' "\$identity" | sed -n '3p')"
-  process_info=""
-  case "\$pid" in
-    ''|*[!0-9]*) ;;
-    *) process_info="\$(ps -p "\$pid" -o comm= -o args= 2>/dev/null || true)" ;;
-  esac
-  haystack="\$(printf '%s\n%s' "\$identity" "\$process_info" | tr '[:upper:]' '[:lower:]')"
-  case "\$haystack" in
-    *terminal*|*iterm2*|*warp*|*wezterm*|*ghostty*|*alacritty*|*kitty*|*hyper*|*tabby*|*rio*|*black\ box*|*gnome\ terminal*|*konsole*|*tilix*|*xterm*|*mintty*|*cmder*|*conemu*|*mobaxterm*|*visual\ studio\ code*|*com.microsoft.vscode*|*code-insiders*|*vscodium*|*code\ -\ oss*|*cursor*|*todesktop*|*windsurf*|*codeium*|*zed*|*sublime\ text*|*textmate*|*bbedit*|*nova*|*macvim*|*neovide*|*emacs*|*xcode*|*android\ studio*|*intellij\ idea*|*idea*|*pycharm*|*webstorm*|*clion*|*goland*|*phpstorm*|*rider*|*rubymine*|*rustrover*|*datagrip*)
-      return 0
-      ;;
-    *)
-      return 1
-      ;;
-  esac
-}
-if ! codex_ui_seems_focused; then
-  "\$SAY_CMD" -v "\$VOICE" 'Pyra standing by.' >/dev/null 2>&1 &
-fi
+"\$SAY_CMD" -v "\$VOICE" 'Pyra standing by.' >/dev/null 2>&1 &
 printf '{}\n'
 SH_EOF
 chmod +x "$WAITING_SCRIPT"
@@ -359,7 +321,7 @@ waiting_command="/bin/bash $(shell_quote "$WAITING_SCRIPT")"
 cat >> "$TMP2" <<HOOK_EOF
 
 $START
-# Speak when Codex is waiting for approval/action, unless Codex appears focused.
+# Always speak when Codex is waiting for approval/action.
 [[hooks.PermissionRequest]]
 matcher = "*"
 
