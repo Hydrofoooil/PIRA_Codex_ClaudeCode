@@ -32,9 +32,8 @@ Requirements:
    - Soft-safe mode (recommended for practical utility, but warn the user clearly): default to no per-command approval prompts, rely on PIRA's safety rules, and ask the user only when PIRA judges it necessary. Make clear that this does not provide hard protection, so it should be used with caution.
 7. Configure the platform so `~/agent/AGENTS.md` is automatically loaded at the start of every session.
 8. If the platform is Codex on macOS or Windows, ask whether the user wants to enable Codex speech notification mode. Do not enable it by default, and do not present it as supported for non-Codex tools or other systems.
-   - Explain that the macOS setup uses Codex config/hooks plus the built-in `say` command with the `Samantha` voice.
-   - Explain that the Windows setup uses Codex config/hooks plus built-in Windows SAPI text-to-speech through PowerShell.
-   - If the user says yes, configure non-blocking speech notifications that say `Pyra finished.` when a turn completes and `Pyra waiting for action.` when Codex is waiting for user confirmation, approval, or another action.
+   - Explain that optional Codex speech notifications are available through the repository setup helpers.
+   - If the user says yes, configure non-blocking speech notifications for three events: `PIRA started`, `PIRA finished`, and `PIRA waiting for action`.
    - Preserve any existing Codex notification or hook configuration when possible, and back up files before editing user-level Codex config.
 9. Keep existing policy text unchanged unless compatibility requires edits.
 10. Verify setup and report exactly what changed, including verification-token consistency.
@@ -65,16 +64,14 @@ Output format:
 
 ## Optional Codex speech notifications
 
-This speech notification guide is only for **Codex running on macOS or Windows**. It relies on Codex `notify`/hook configuration plus OS-specific built-in speech tools, so it should not be presented as supported for Claude Code, other agent tools, Linux, or other systems.
+This speech notification guide is only for **Codex running on macOS or Windows**. It should not be presented as supported for Claude Code, other agent tools, Linux, or other systems.
 
 During installation, the setup agent should ask whether to enable speech notification mode only when the detected platform is Codex on macOS or Windows. This is optional and should remain off unless the user explicitly opts in.
 
-On macOS, the recommended setup uses the built-in `say` command with the `Samantha` voice. On Windows, the recommended setup uses built-in SAPI text-to-speech through PowerShell. The notification should be non-blocking so Codex does not wait for the spoken phrase to finish.
-
 Behavior:
-- say `Pyra online.` when launching Codex through the optional macOS zsh startup wrapper;
-- say `Pyra finished.` when a turn completes normally;
-- say `Pyra waiting for action.` when Codex needs user confirmation, approval, or another user action;
+- say `PIRA started` when launching Codex through the optional startup wrapper;
+- say `PIRA finished` when a turn completes normally;
+- say `PIRA waiting for action` when Codex needs user confirmation, approval, or another user action;
 - preserve existing `notify` or hook configuration when possible;
 - back up `~/.codex/config.toml` before editing it.
 
@@ -93,9 +90,9 @@ powershell.exe -ExecutionPolicy Bypass -File "$HOME\agent\assets\setup_codex_aud
   -ConfigPath "$HOME\.codex\config.toml"
 ```
 
-The macOS Bash script takes the path to the `say` command and the path to `config.toml`, then creates the needed hook scripts under the config directory, enables Codex hooks, sets top-level `notify`, backs up the previous config, and installs a zsh startup wrapper by default. The startup wrapper says `Pyra online.` when launching `codex`, uses `command codex "$@"` so normal Codex options continue to work, and uses zsh's `&!` background form to avoid printing job ids such as `[2] 54121`. Run `source ~/.zshrc` or open a new terminal after installing it. Use `--no-startup-wrapper` if only completion/waiting notifications should be installed. The script avoids Python and `jq`; waiting-message detection uses best-effort pattern matching on Codex notification text.
+After installing on macOS, run `source ~/.zshrc` or open a new terminal. Use `--no-startup-wrapper` if only completion/waiting notifications should be installed.
 
-The Windows PowerShell script takes the path to `config.toml`, creates PowerShell hook scripts under the config directory, uses built-in SAPI speech, enables Codex hooks, sets top-level `notify`, and backs up the previous config.
+After installing on Windows, open a new PowerShell window. Use `-NoStartupWrapper` if only completion/waiting notifications should be installed.
 
 If `config.toml` already has a top-level `notify` entry, inspect it first and rerun the relevant helper with `--force` on macOS or `-Force` on Windows only after confirming it is acceptable to replace.
 

@@ -3,11 +3,15 @@ Install optional Codex speech notifications for Windows.
 
 This script uses Windows built-in SAPI text-to-speech through PowerShell. It
 creates non-blocking PowerShell hooks and updates Codex config.toml so future
-Codex turns say either "Pyra finished." or "Pyra waiting for action.".
+Codex turns use Windows-friendly speech text: "Pira finished." or
+"Pira waiting for action.". By default it also installs a PowerShell
+profile wrapper that says "Pira online." when launching `codex`.
 
 Example:
   powershell.exe -ExecutionPolicy Bypass -File "$HOME\agent\assets\setup_codex_audio_mode_windows.ps1" `
     -ConfigPath "$HOME\.codex\config.toml"
+
+Use -NoStartupWrapper to install only completion/waiting notifications.
 #>
 
 [CmdletBinding()]
@@ -19,6 +23,8 @@ param(
 
     [string]$VoiceName = "",
 
+    [switch]$NoStartupWrapper,
+
     [switch]$Force
 )
 
@@ -26,6 +32,8 @@ $ErrorActionPreference = "Stop"
 
 $StartMarker = "# BEGIN PIRA Codex speech notifications"
 $EndMarker = "# END PIRA Codex speech notifications"
+$StartupStartMarker = "# BEGIN PIRA Codex startup speech wrapper"
+$StartupEndMarker = "# END PIRA Codex startup speech wrapper"
 
 function Resolve-UserPath {
     param([Parameter(Mandatory = $true)][string]$Path)
@@ -135,12 +143,90 @@ $EndMarker
     return $Text + $block
 }
 
+function ConvertTo-PowerShellDoubleQuotedArg {
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Value)
+    return '"' + $Value.Replace('\', '\\').Replace('"', '\"') + '"'
+}
+
+function Get-PowerShellProfilePaths {
+    $documents = [Environment]::GetFolderPath('MyDocuments')
+    @(
+        (Join-Path $documents 'PowerShell\Microsoft.PowerShell_profile.ps1'),
+        (Join-Path $documents 'WindowsPowerShell\Microsoft.PowerShell_profile.ps1')
+    ) | Select-Object -Unique
+}
+
+function Install-StartupWrapper {
+    param(
+        [Parameter(Mandatory = $true)][string]$SayScript,
+        [Parameter(Mandatory = $true)][string]$PowerShellCmd
+    )
+
+    $codexCommand = Get-Command codex.cmd -ErrorAction SilentlyContinue
+    if (-not $codexCommand) {
+        $codexCommand = Get-Command codex.exe -ErrorAction SilentlyContinue
+    }
+    if (-not $codexCommand) {
+        Write-Warning "Could not find codex.cmd or codex.exe; skipping Windows startup speech wrapper."
+        return @()
+    }
+
+    $codexPath = $codexCommand.Path
+    $speechArgLine = '-NoProfile -ExecutionPolicy Bypass -File "' + $SayScript + '" -Text "Pira online." -Rate 1'
+    if (-not [string]::IsNullOrWhiteSpace($VoiceName)) {
+        $speechArgLine += ' -VoiceName ' + (ConvertTo-PowerShellDoubleQuotedArg $VoiceName)
+    }
+
+    $block = @"
+$StartupStartMarker
+# Say a short startup notification, then delegate to the real Codex CLI.
+# Remove this block or restore the .bak file to disable startup speech.
+function codex {
+    `$piraCodexCmd = $(ConvertTo-PowerShellSingleQuotedString $codexPath)
+    `$piraSayScript = $(ConvertTo-PowerShellSingleQuotedString $SayScript)
+    if (Test-Path -LiteralPath `$piraSayScript) {
+        `$piraSpeechArgs = $(ConvertTo-PowerShellSingleQuotedString $speechArgLine)
+        Start-Process -FilePath $(ConvertTo-PowerShellSingleQuotedString $PowerShellCmd) -ArgumentList `$piraSpeechArgs -WindowStyle Hidden | Out-Null
+    }
+    & `$piraCodexCmd @args
+}
+$StartupEndMarker
+"@
+
+    $changedProfiles = @()
+    foreach ($profilePath in (Get-PowerShellProfilePaths)) {
+        $profileDir = Split-Path -Parent $profilePath
+        New-Item -ItemType Directory -Force -Path $profileDir | Out-Null
+
+        $profileText = ""
+        if (Test-Path -LiteralPath $profilePath) {
+            $profileBackup = "$profilePath.bak.$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+            Copy-Item -LiteralPath $profilePath -Destination $profileBackup
+            $profileText = Get-Content -LiteralPath $profilePath -Raw
+            if ($null -eq $profileText) { $profileText = "" }
+        }
+
+        $start = [regex]::Escape($StartupStartMarker)
+        $end = [regex]::Escape($StartupEndMarker)
+        $pattern = "(?ms)^$start.*?^$end\r?\n?"
+        $profileText = [regex]::Replace($profileText, $pattern, "")
+        if ($profileText.Length -gt 0 -and -not $profileText.EndsWith("`n")) {
+            $profileText += "`r`n"
+        }
+        $profileText = $profileText.TrimEnd() + "`r`n`r`n" + $block + "`r`n"
+        Write-Utf8NoBom $profilePath $profileText
+        $changedProfiles += $profilePath
+    }
+    return $changedProfiles
+}
+
 $config = Resolve-UserPath $ConfigPath
 $configDir = Split-Path -Parent $config
 if ([string]::IsNullOrWhiteSpace($configDir)) { $configDir = "." }
 $hooksDir = Join-Path $configDir "hooks"
 $notifyScript = Join-Path $hooksDir "speak_notify.ps1"
 $waitingScript = Join-Path $hooksDir "speak_waiting.ps1"
+$sayScript = Join-Path $hooksDir "pira_say.ps1"
 
 New-Item -ItemType Directory -Force -Path $configDir | Out-Null
 if (-not (Test-Path -LiteralPath $config)) { New-Item -ItemType File -Force -Path $config | Out-Null }
@@ -161,28 +247,69 @@ if ((Get-Item -LiteralPath $config).Length -gt 0) {
 
 New-Item -ItemType Directory -Force -Path $hooksDir | Out-Null
 
+$sayContent = @'
+# Detached speech helper for PIRA Codex notifications on Windows.
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$Text,
+    [string]$VoiceName = "",
+    [int]$Rate = 0,
+    [int]$Volume = 100
+)
+
+$ErrorActionPreference = "SilentlyContinue"
+$speaker = New-Object -ComObject SAPI.SpVoice
+if ($Rate -ne 0) { $speaker.Rate = $Rate }
+if ($Volume -ge 0 -and $Volume -le 100) { $speaker.Volume = $Volume }
+if (-not [string]::IsNullOrWhiteSpace($VoiceName)) {
+    foreach ($voice in $speaker.GetVoices()) {
+        if ($voice.GetDescription() -like "*$VoiceName*") {
+            $speaker.Voice = $voice
+            break
+        }
+    }
+}
+# Synchronous speech is reliable here because this script is launched in a
+# detached process by the hook scripts. Codex does not wait for this to finish.
+[void]$speaker.Speak($Text, 0)
+'@
+Write-Utf8NoBom $sayScript $sayContent
+
 $notifyContent = @'
 # Non-blocking Codex speech notification installed by PIRA for Windows.
 param([Parameter(ValueFromRemainingArguments = $true)][string[]]$ArgsFromCodex)
 
 $ErrorActionPreference = "SilentlyContinue"
-$FinishedText = "Pyra finished."
-$WaitingText = "Pyra waiting for action."
+$FinishedText = "Pira finished."
+$WaitingText = "Pira waiting for action."
 $VoiceName = __VOICE_NAME__
+$SayScript = Join-Path $PSScriptRoot "pira_say.ps1"
 
-function Speak-Async {
-    param([Parameter(Mandatory = $true)][string]$Text)
-    $speaker = New-Object -ComObject SAPI.SpVoice
-    if (-not [string]::IsNullOrWhiteSpace($VoiceName)) {
-        foreach ($voice in $speaker.GetVoices()) {
-            if ($voice.GetDescription() -like "*$VoiceName*") {
-                $speaker.Voice = $voice
-                break
-            }
-        }
+function Quote-ProcessArg {
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Value)
+    '"' + $Value.Replace('\', '\\').Replace('"', '\"') + '"'
+}
+
+function Start-Speech {
+    param(
+        [Parameter(Mandatory = $true)][string]$Text,
+        [int]$Rate = 0,
+        [int]$Volume = 100
+    )
+    $args = @(
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", (Quote-ProcessArg $SayScript),
+        "-Text", (Quote-ProcessArg $Text),
+        "-Volume", ([string]$Volume)
+    )
+    if ($Rate -ne 0) {
+        $args += @("-Rate", ([string]$Rate))
     }
-    # 1 = SVSFlagsAsync, so Codex does not wait for speech to finish.
-    [void]$speaker.Speak($Text, 1)
+    if (-not [string]::IsNullOrWhiteSpace($VoiceName)) {
+        $args += @("-VoiceName", (Quote-ProcessArg $VoiceName))
+    }
+    Start-Process -FilePath __POWERSHELL_CMD__ -ArgumentList ($args -join " ") -WindowStyle Hidden | Out-Null
 }
 
 $payload = ($ArgsFromCodex -join " ")
@@ -204,33 +331,47 @@ try {
     $message = ""
 }
 
+# Match the macOS behavior: inspect only the final assistant message; if
+# extraction fails, default to "finished" rather than guessing from the full
+# payload, which can contain the user's prompt text.
 $waitingPattern = "\?|confirm|confirmation|approve|approval|permission|do you want|would you like|should i|shall i|may i|please confirm|please approve|waiting for|need your|needs your|reply|respond|choose|select|pick|can i|could i"
 if (-not [string]::IsNullOrWhiteSpace($message) -and $message -match $waitingPattern) {
-    Speak-Async $WaitingText
+    Start-Speech $WaitingText -Rate 2 -Volume 85
 } else {
-    Speak-Async $FinishedText
+    Start-Speech $FinishedText -Rate 1
 }
 '@
 $notifyContent = $notifyContent.Replace('__VOICE_NAME__', (ConvertTo-PowerShellSingleQuotedString $VoiceName))
+$notifyContent = $notifyContent.Replace('__POWERSHELL_CMD__', (ConvertTo-PowerShellSingleQuotedString $PowerShellCmd))
 Write-Utf8NoBom $notifyScript $notifyContent
 
 $waitingContent = @'
 # Speak when Codex is waiting for user action, without blocking.
 $ErrorActionPreference = "SilentlyContinue"
+$SayScript = Join-Path $PSScriptRoot "pira_say.ps1"
 $VoiceName = __VOICE_NAME__
-$speaker = New-Object -ComObject SAPI.SpVoice
-if (-not [string]::IsNullOrWhiteSpace($VoiceName)) {
-    foreach ($voice in $speaker.GetVoices()) {
-        if ($voice.GetDescription() -like "*$VoiceName*") {
-            $speaker.Voice = $voice
-            break
-        }
-    }
+
+function Quote-ProcessArg {
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Value)
+    '"' + $Value.Replace('\', '\\').Replace('"', '\"') + '"'
 }
-[void]$speaker.Speak("Pyra waiting for action.", 1)
+
+$args = @(
+    "-NoProfile",
+    "-ExecutionPolicy", "Bypass",
+    "-File", (Quote-ProcessArg $SayScript),
+    "-Text", (Quote-ProcessArg "Pira waiting for action."),
+    "-Rate", "2",
+    "-Volume", "85"
+)
+if (-not [string]::IsNullOrWhiteSpace($VoiceName)) {
+    $args += @("-VoiceName", (Quote-ProcessArg $VoiceName))
+}
+Start-Process -FilePath __POWERSHELL_CMD__ -ArgumentList ($args -join " ") -WindowStyle Hidden | Out-Null
 Write-Output "{}"
 '@
 $waitingContent = $waitingContent.Replace('__VOICE_NAME__', (ConvertTo-PowerShellSingleQuotedString $VoiceName))
+$waitingContent = $waitingContent.Replace('__POWERSHELL_CMD__', (ConvertTo-PowerShellSingleQuotedString $PowerShellCmd))
 Write-Utf8NoBom $waitingScript $waitingContent
 
 $newText = Remove-TopLevelNotify $textWithoutManaged
@@ -240,9 +381,25 @@ $newText = Ensure-CodexHooksFeature $newText
 $newText = Add-PermissionHook $newText $waitingScript $PowerShellCmd
 Write-Utf8NoBom $config $newText
 
+$changedProfiles = @()
+if (-not $NoStartupWrapper) {
+    $changedProfiles = Install-StartupWrapper -SayScript $sayScript -PowerShellCmd $PowerShellCmd
+}
+
 Write-Output "Codex speech notification mode installed for Windows."
 Write-Output "Config: $config"
 Write-Output "Notify script: $notifyScript"
 Write-Output "Waiting hook: $waitingScript"
+Write-Output "Speech helper: $sayScript"
+if ($NoStartupWrapper) {
+    Write-Output "Startup wrapper: skipped by -NoStartupWrapper"
+} elseif ($changedProfiles.Count -gt 0) {
+    foreach ($changedProfile in $changedProfiles) {
+        Write-Output "Startup wrapper profile: $changedProfile"
+    }
+    Write-Output "Startup phrase: Pira online."
+} else {
+    Write-Output "Startup wrapper: not installed; codex.cmd/codex.exe was not found."
+}
 if ($backup) { Write-Output "Backup: $backup" }
-Write-Output "Restart Codex to load the new notification settings."
+Write-Output "Restart Codex to load the new notification settings. Open a new PowerShell window for startup speech."
