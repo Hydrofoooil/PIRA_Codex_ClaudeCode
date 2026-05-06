@@ -84,6 +84,8 @@ complete_msg.m4a
 waiting_msg.m4a
 ```
 
+For detailed customization, audio postprocessing steps, and ready-to-paste prompts for PIRA, see `~/agent/assets/AUDIO_CUSTOMIZATION_GUIDE.md`.
+
 The setup helpers preserve existing `notify` or hook configuration when possible and back up `~/.codex/config.toml` before editing it.
 
 Use the repository helper scripts rather than reconstructing the setup manually. For macOS:
