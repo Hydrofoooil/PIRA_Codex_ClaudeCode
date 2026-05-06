@@ -15,6 +15,7 @@
 - In LaTeX prose, use `\cref` consistently for cross-references; use `\citet` for textual citations and `\citep` for parenthetical citations; avoid generic `\cite` unless the document style explicitly requires it.
 - Expand acronyms on first use in each section when needed, then use them consistently.
 - Prefer concise, reader-friendly prose: shorter sentences when helpful, natural logical connectors, and examples only when they materially improve clarity.
+- In academic prose, avoid semicolons unless they are clearly necessary; prefer sentence splits or light wording changes. Keep semicolons when they are part of math, code, or notation syntax.
 - Flag logic, evidence, or exposition gaps and propose minimal fixes.
 - Do not leave ambiguous notation, undefined symbols, unexplained task-specific terminology, or obvious audience-mismatch problems in the final text.
 
