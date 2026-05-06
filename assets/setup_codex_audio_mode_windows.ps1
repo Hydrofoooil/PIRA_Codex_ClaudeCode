@@ -1,15 +1,22 @@
 <#
-Install optional Codex speech notifications for Windows.
+Install optional Codex audio notifications for Windows.
 
-This script uses Windows built-in SAPI text-to-speech through PowerShell. It
-creates non-blocking PowerShell hooks and updates Codex config.toml so normal
-completion can say "Pira finished." and waiting states always say
-"Pira standing by." By default it also installs a PowerShell profile wrapper
-that says "Pira online." when launching `codex`.
+This script plays local audio files instead of using text-to-speech. It creates
+non-blocking PowerShell hooks and updates Codex config.toml so normal completion
+can play complete_msg.m4a and focus-aware waiting states play waiting_msg.m4a. By
+default it also installs a PowerShell profile wrapper that plays start_msg.m4a
+when launching `codex`.
+
+Project default audio set: $HOME\agent\PIRA_Voice\Samantha
 
 Example:
   powershell.exe -ExecutionPolicy Bypass -File "$HOME\agent\assets\setup_codex_audio_mode_windows.ps1" `
     -ConfigPath "$HOME\.codex\config.toml"
+
+Local custom audio example:
+  powershell.exe -ExecutionPolicy Bypass -File "$HOME\agent\assets\setup_codex_audio_mode_windows.ps1" `
+    -ConfigPath "$HOME\.codex\config.toml" `
+    -AudioDir "$HOME\agent\PIRA_Voice\Debbie"
 
 Use -NoStartupWrapper to install only completion/waiting notifications.
 #>
@@ -19,9 +26,15 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$ConfigPath,
 
-    [string]$PowerShellCmd = "powershell.exe",
+    [string]$AudioDir = "$HOME\agent\PIRA_Voice\Samantha",
 
-    [string]$VoiceName = "",
+    [string]$StartupAudio = "",
+
+    [string]$FinishedAudio = "",
+
+    [string]$WaitingAudio = "",
+
+    [string]$PowerShellCmd = "powershell.exe",
 
     [switch]$NoStartupWrapper,
 
@@ -56,6 +69,11 @@ function ConvertTo-PowerShellSingleQuotedString {
     return "'" + $Value.Replace("'", "''") + "'"
 }
 
+function ConvertTo-PowerShellDoubleQuotedArg {
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Value)
+    return '"' + $Value.Replace('\', '\\').Replace('"', '\"') + '"'
+}
+
 function Write-Utf8NoBom {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -88,7 +106,7 @@ function Insert-TopLevelNotify {
         [Parameter(Mandatory = $true)][string]$Text,
         [Parameter(Mandatory = $true)][string]$NotifyLine
     )
-    $block = "$StartMarker`r`n# Non-blocking status speech for Codex on Windows.`r`n$NotifyLine`r`n$EndMarker`r`n`r`n"
+    $block = "$StartMarker`r`n# Non-blocking status audio for Codex on Windows.`r`n$NotifyLine`r`n$EndMarker`r`n`r`n"
     $match = [regex]::Match($Text, '(?m)^\[')
     if ($match.Success) {
         return $Text.Insert($match.Index, $block)
@@ -129,7 +147,7 @@ function Add-PermissionHook {
     $block = @"
 
 $StartMarker
-# Always speak when Codex is waiting for approval/action.
+# Play waiting audio unless the coding UI is focused.
 [[hooks.PermissionRequest]]
 matcher = "*"
 
@@ -137,15 +155,10 @@ matcher = "*"
 type = "command"
 command = $(ConvertTo-TomlBasicString $command)
 timeout = 1
-statusMessage = "Checking waiting status speech"
+statusMessage = "Checking waiting status audio"
 $EndMarker
 "@
     return $Text + $block
-}
-
-function ConvertTo-PowerShellDoubleQuotedArg {
-    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Value)
-    return '"' + $Value.Replace('\', '\\').Replace('"', '\"') + '"'
 }
 
 function Get-PowerShellProfilePaths {
@@ -158,7 +171,8 @@ function Get-PowerShellProfilePaths {
 
 function Install-StartupWrapper {
     param(
-        [Parameter(Mandatory = $true)][string]$SayScript,
+        [Parameter(Mandatory = $true)][string]$PlayScript,
+        [Parameter(Mandatory = $true)][string]$StartupAudioPath,
         [Parameter(Mandatory = $true)][string]$PowerShellCmd
     )
 
@@ -167,26 +181,23 @@ function Install-StartupWrapper {
         $codexCommand = Get-Command codex.exe -ErrorAction SilentlyContinue
     }
     if (-not $codexCommand) {
-        Write-Warning "Could not find codex.cmd or codex.exe; skipping Windows startup speech wrapper."
+        Write-Warning "Could not find codex.cmd or codex.exe; skipping Windows startup audio wrapper."
         return @()
     }
 
     $codexPath = $codexCommand.Path
-    $speechArgLine = '-NoProfile -ExecutionPolicy Bypass -File "' + $SayScript + '" -Text "Pira online." -Rate 1'
-    if (-not [string]::IsNullOrWhiteSpace($VoiceName)) {
-        $speechArgLine += ' -VoiceName ' + (ConvertTo-PowerShellDoubleQuotedArg $VoiceName)
-    }
+    $audioArgLine = '-NoProfile -ExecutionPolicy Bypass -File "' + $PlayScript + '" -AudioPath "' + $StartupAudioPath + '"'
 
     $block = @"
 $StartupStartMarker
-# Say a short startup notification, then delegate to the real Codex CLI.
-# Remove this block or restore the .bak file to disable startup speech.
+# Play a short startup audio notification, then delegate to the real Codex CLI.
+# Remove this block or restore the .bak file to disable startup audio.
 function codex {
     `$piraCodexCmd = $(ConvertTo-PowerShellSingleQuotedString $codexPath)
-    `$piraSayScript = $(ConvertTo-PowerShellSingleQuotedString $SayScript)
-    if (Test-Path -LiteralPath `$piraSayScript) {
-        `$piraSpeechArgs = $(ConvertTo-PowerShellSingleQuotedString $speechArgLine)
-        Start-Process -FilePath $(ConvertTo-PowerShellSingleQuotedString $PowerShellCmd) -ArgumentList `$piraSpeechArgs -WindowStyle Hidden | Out-Null
+    `$piraPlayScript = $(ConvertTo-PowerShellSingleQuotedString $PlayScript)
+    if (Test-Path -LiteralPath `$piraPlayScript) {
+        `$piraAudioArgs = $(ConvertTo-PowerShellSingleQuotedString $audioArgLine)
+        Start-Process -FilePath $(ConvertTo-PowerShellSingleQuotedString $PowerShellCmd) -ArgumentList `$piraAudioArgs -WindowStyle Hidden | Out-Null
     }
     & `$piraCodexCmd @args
 }
@@ -221,12 +232,23 @@ $StartupEndMarker
 }
 
 $config = Resolve-UserPath $ConfigPath
+$audioDirResolved = Resolve-UserPath $AudioDir
+if ([string]::IsNullOrWhiteSpace($StartupAudio)) { $StartupAudio = Join-Path $audioDirResolved 'start_msg.m4a' } else { $StartupAudio = Resolve-UserPath $StartupAudio }
+if ([string]::IsNullOrWhiteSpace($FinishedAudio)) { $FinishedAudio = Join-Path $audioDirResolved 'complete_msg.m4a' } else { $FinishedAudio = Resolve-UserPath $FinishedAudio }
+if ([string]::IsNullOrWhiteSpace($WaitingAudio)) { $WaitingAudio = Join-Path $audioDirResolved 'waiting_msg.m4a' } else { $WaitingAudio = Resolve-UserPath $WaitingAudio }
+
+foreach ($audio in @($StartupAudio, $FinishedAudio, $WaitingAudio)) {
+    if (-not (Test-Path -LiteralPath $audio -PathType Leaf)) {
+        Write-Error "Audio file is missing: $audio"
+    }
+}
+
 $configDir = Split-Path -Parent $config
 if ([string]::IsNullOrWhiteSpace($configDir)) { $configDir = "." }
 $hooksDir = Join-Path $configDir "hooks"
 $notifyScript = Join-Path $hooksDir "speak_notify.ps1"
 $waitingScript = Join-Path $hooksDir "speak_waiting.ps1"
-$sayScript = Join-Path $hooksDir "pira_say.ps1"
+$playScript = Join-Path $hooksDir "pira_play_audio.ps1"
 
 New-Item -ItemType Directory -Force -Path $configDir | Out-Null
 if (-not (Test-Path -LiteralPath $config)) { New-Item -ItemType File -Force -Path $config | Out-Null }
@@ -247,43 +269,42 @@ if ((Get-Item -LiteralPath $config).Length -gt 0) {
 
 New-Item -ItemType Directory -Force -Path $hooksDir | Out-Null
 
-$sayContent = @'
-# Detached speech helper for PIRA Codex notifications on Windows.
+$playContent = @'
+# Detached local audio helper for PIRA Codex notifications on Windows.
 param(
     [Parameter(Mandatory = $true)]
-    [string]$Text,
-    [string]$VoiceName = "",
-    [int]$Rate = 0,
-    [int]$Volume = 100
+    [string]$AudioPath
 )
 
 $ErrorActionPreference = "SilentlyContinue"
-$speaker = New-Object -ComObject SAPI.SpVoice
-if ($Rate -ne 0) { $speaker.Rate = $Rate }
-if ($Volume -ge 0 -and $Volume -le 100) { $speaker.Volume = $Volume }
-if (-not [string]::IsNullOrWhiteSpace($VoiceName)) {
-    foreach ($voice in $speaker.GetVoices()) {
-        if ($voice.GetDescription() -like "*$VoiceName*") {
-            $speaker.Voice = $voice
-            break
-        }
+$resolved = (Resolve-Path -LiteralPath $AudioPath).Path
+Add-Type -AssemblyName PresentationCore
+$player = New-Object System.Windows.Media.MediaPlayer
+$player.Open([Uri]$resolved)
+Start-Sleep -Milliseconds 150
+$player.Play()
+
+$maxSeconds = 15
+$started = Get-Date
+while (((Get-Date) - $started).TotalSeconds -lt $maxSeconds) {
+    Start-Sleep -Milliseconds 100
+    if ($player.NaturalDuration.HasTimeSpan) {
+        $duration = $player.NaturalDuration.TimeSpan
+        if ($player.Position -ge $duration -and $duration.TotalMilliseconds -gt 0) { break }
     }
 }
-# Synchronous speech is reliable here because this script is launched in a
-# detached process by the hook scripts. Codex does not wait for this to finish.
-[void]$speaker.Speak($Text, 0)
+$player.Close()
 '@
-Write-Utf8NoBom $sayScript $sayContent
+Write-Utf8NoBom $playScript $playContent
 
 $notifyContent = @'
-# Non-blocking Codex speech notification installed by PIRA for Windows.
+# Non-blocking Codex audio notification installed by PIRA for Windows.
 param([Parameter(ValueFromRemainingArguments = $true)][string[]]$ArgsFromCodex)
 
 $ErrorActionPreference = "SilentlyContinue"
-$FinishedText = "Pira finished."
-$WaitingText = "Pira standing by."
-$VoiceName = __VOICE_NAME__
-$SayScript = Join-Path $PSScriptRoot "pira_say.ps1"
+$FinishedAudio = __FINISHED_AUDIO__
+$WaitingAudio = __WAITING_AUDIO__
+$PlayScript = Join-Path $PSScriptRoot "pira_play_audio.ps1"
 
 function Quote-ProcessArg {
     param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Value)
@@ -331,27 +352,18 @@ function Test-CodexUiSeemsFocused {
     ) -contains $processName
 }
 
-function Start-Speech {
+function Start-Audio {
     param(
-        [Parameter(Mandatory = $true)][string]$Text,
-        [int]$Rate = 0,
-        [int]$Volume = 100,
+        [Parameter(Mandatory = $true)][string]$AudioPath,
         [switch]$Always
     )
     if (-not $Always -and (Test-CodexUiSeemsFocused)) { return }
     $args = @(
         "-NoProfile",
         "-ExecutionPolicy", "Bypass",
-        "-File", (Quote-ProcessArg $SayScript),
-        "-Text", (Quote-ProcessArg $Text),
-        "-Volume", ([string]$Volume)
+        "-File", (Quote-ProcessArg $PlayScript),
+        "-AudioPath", (Quote-ProcessArg $AudioPath)
     )
-    if ($Rate -ne 0) {
-        $args += @("-Rate", ([string]$Rate))
-    }
-    if (-not [string]::IsNullOrWhiteSpace($VoiceName)) {
-        $args += @("-VoiceName", (Quote-ProcessArg $VoiceName))
-    }
     Start-Process -FilePath __POWERSHELL_CMD__ -ArgumentList ($args -join " ") -WindowStyle Hidden | Out-Null
 }
 
@@ -376,44 +388,83 @@ try {
 
 # Match the macOS behavior: inspect only the final assistant message; if
 # extraction fails, default to "finished" rather than guessing from the full
-# payload, which can contain the user's prompt text.
-$waitingPattern = "\?|confirm|confirmation|approve|approval|permission|do you want|would you like|should i|shall i|may i|please confirm|please approve|waiting for|need your|needs your|reply|respond|choose|select|pick|can i|could i"
-if (-not [string]::IsNullOrWhiteSpace($message) -and $message -match $waitingPattern) {
-    Start-Speech $WaitingText -Rate 2 -Volume 85 -Always
+# payload. Only a question mark is treated as waiting. Waiting audio uses the
+# same focus check as completion audio.
+if (-not [string]::IsNullOrWhiteSpace($message) -and $message.Contains("?")) {
+    Start-Audio $WaitingAudio
 } else {
-    Start-Speech $FinishedText -Rate 1
+    Start-Audio $FinishedAudio
 }
 '@
-$notifyContent = $notifyContent.Replace('__VOICE_NAME__', (ConvertTo-PowerShellSingleQuotedString $VoiceName))
+$notifyContent = $notifyContent.Replace('__FINISHED_AUDIO__', (ConvertTo-PowerShellSingleQuotedString $FinishedAudio))
+$notifyContent = $notifyContent.Replace('__WAITING_AUDIO__', (ConvertTo-PowerShellSingleQuotedString $WaitingAudio))
 $notifyContent = $notifyContent.Replace('__POWERSHELL_CMD__', (ConvertTo-PowerShellSingleQuotedString $PowerShellCmd))
 Write-Utf8NoBom $notifyScript $notifyContent
 
 $waitingContent = @'
-# Always speak when Codex is waiting for user action, without blocking.
+# Play audio when Codex is waiting for user action, unless the coding UI is focused.
 $ErrorActionPreference = "SilentlyContinue"
-$SayScript = Join-Path $PSScriptRoot "pira_say.ps1"
-$VoiceName = __VOICE_NAME__
+$PlayScript = Join-Path $PSScriptRoot "pira_play_audio.ps1"
+$WaitingAudio = __WAITING_AUDIO__
 
 function Quote-ProcessArg {
     param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Value)
     '"' + $Value.Replace('\', '\\').Replace('"', '\"') + '"'
 }
 
-$args = @(
-    "-NoProfile",
-    "-ExecutionPolicy", "Bypass",
-    "-File", (Quote-ProcessArg $SayScript),
-    "-Text", (Quote-ProcessArg "Pira standing by."),
-    "-Rate", "2",
-    "-Volume", "85"
-)
-if (-not [string]::IsNullOrWhiteSpace($VoiceName)) {
-    $args += @("-VoiceName", (Quote-ProcessArg $VoiceName))
+function Get-ForegroundProcessName {
+    try {
+        $typeDefinition = @"
+using System;
+using System.Runtime.InteropServices;
+public static class PiraForegroundWindowWaiting {
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
 }
-Start-Process -FilePath __POWERSHELL_CMD__ -ArgumentList ($args -join " ") -WindowStyle Hidden | Out-Null
+"@
+        Add-Type -TypeDefinition $typeDefinition -ErrorAction SilentlyContinue | Out-Null
+        $processId = 0
+        $hwnd = [PiraForegroundWindowWaiting]::GetForegroundWindow()
+        if ($hwnd -eq [IntPtr]::Zero) { return "" }
+        [void][PiraForegroundWindowWaiting]::GetWindowThreadProcessId($hwnd, [ref]$processId)
+        if ($processId -eq 0) { return "" }
+        return (Get-Process -Id $processId -ErrorAction SilentlyContinue).ProcessName
+    } catch {
+        return ""
+    }
+}
+
+function Test-CodexUiSeemsFocused {
+    $processName = (Get-ForegroundProcessName).ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($processName)) { return $false }
+    return @(
+        "windowsterminal", "terminal", "wt", "powershell", "pwsh", "cmd",
+        "conhost", "wezterm-gui", "wezterm", "warp", "alacritty", "kitty",
+        "hyper", "tabby", "rio", "mintty", "conemu64", "conemu", "cmder",
+        "mobaxterm", "code", "code-insiders", "vscodium", "cursor", "windsurf",
+        "zed", "sublime_text", "notepad++", "notepad++64", "gvim", "neovide",
+        "emacs", "devenv", "idea64", "idea", "pycharm64", "pycharm",
+        "webstorm64", "webstorm", "clion64", "clion", "goland64", "goland",
+        "phpstorm64", "phpstorm", "rider64", "rider", "rubymine64", "rubymine",
+        "rustrover64", "rustrover", "datagrip64", "datagrip", "androidstudio64",
+        "studio64"
+    ) -contains $processName
+}
+
+if (-not (Test-CodexUiSeemsFocused)) {
+    $args = @(
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", (Quote-ProcessArg $PlayScript),
+        "-AudioPath", (Quote-ProcessArg $WaitingAudio)
+    )
+    Start-Process -FilePath __POWERSHELL_CMD__ -ArgumentList ($args -join " ") -WindowStyle Hidden | Out-Null
+}
 Write-Output "{}"
 '@
-$waitingContent = $waitingContent.Replace('__VOICE_NAME__', (ConvertTo-PowerShellSingleQuotedString $VoiceName))
+$waitingContent = $waitingContent.Replace('__WAITING_AUDIO__', (ConvertTo-PowerShellSingleQuotedString $WaitingAudio))
 $waitingContent = $waitingContent.Replace('__POWERSHELL_CMD__', (ConvertTo-PowerShellSingleQuotedString $PowerShellCmd))
 Write-Utf8NoBom $waitingScript $waitingContent
 
@@ -426,23 +477,26 @@ Write-Utf8NoBom $config $newText
 
 $changedProfiles = @()
 if (-not $NoStartupWrapper) {
-    $changedProfiles = Install-StartupWrapper -SayScript $sayScript -PowerShellCmd $PowerShellCmd
+    $changedProfiles = Install-StartupWrapper -PlayScript $playScript -StartupAudioPath $StartupAudio -PowerShellCmd $PowerShellCmd
 }
 
-Write-Output "Codex speech notification mode installed for Windows."
+Write-Output "Codex audio notification mode installed for Windows."
 Write-Output "Config: $config"
+Write-Output "Audio directory: $audioDirResolved"
+Write-Output "Startup audio: $StartupAudio"
+Write-Output "Finished audio: $FinishedAudio"
+Write-Output "Waiting audio: $WaitingAudio"
 Write-Output "Notify script: $notifyScript"
 Write-Output "Waiting hook: $waitingScript"
-Write-Output "Speech helper: $sayScript"
+Write-Output "Audio helper: $playScript"
 if ($NoStartupWrapper) {
     Write-Output "Startup wrapper: skipped by -NoStartupWrapper"
 } elseif ($changedProfiles.Count -gt 0) {
     foreach ($changedProfile in $changedProfiles) {
         Write-Output "Startup wrapper profile: $changedProfile"
     }
-    Write-Output "Startup phrase: Pira online."
 } else {
     Write-Output "Startup wrapper: not installed; codex.cmd/codex.exe was not found."
 }
 if ($backup) { Write-Output "Backup: $backup" }
-Write-Output "Restart Codex to load the new notification settings. Open a new PowerShell window for startup speech."
+Write-Output "Restart Codex to load the new notification settings. Open a new PowerShell window for startup audio."

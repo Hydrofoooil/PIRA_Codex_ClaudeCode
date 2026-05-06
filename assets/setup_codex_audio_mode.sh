@@ -1,25 +1,33 @@
 #!/usr/bin/env bash
-# Install optional Codex speech notifications for macOS.
+# Install optional Codex audio notifications for macOS.
 #
 # This script avoids Python and other non-default dependencies. It creates
 # non-blocking Bash hooks, updates Codex config.toml so normal completion can
-# say "Pyra finished." and waiting states always say "Pyra standing by.", and
-# optionally installs a zsh wrapper so starting Codex says "Pyra online.".
+# play a finished audio clip and waiting states always play a standing-by audio
+# clip, and optionally installs a zsh wrapper so starting Codex plays an online
+# audio clip.
 #
+# Project default audio set: ~/agent/PIRA_Voice/Samantha
 # Example:
 #   bash ~/agent/assets/setup_codex_audio_mode.sh \
-#     --say-cmd /usr/bin/say \
 #     --config ~/.codex/config.toml
+#
+# Local custom audio example:
+#   bash ~/agent/assets/setup_codex_audio_mode.sh \
+#     --config ~/.codex/config.toml \
+#     --audio-dir ~/agent/PIRA_Voice/Debbie
 
 set -euo pipefail
 
 START="# BEGIN PIRA Codex speech notifications"
 END="# END PIRA Codex speech notifications"
-VOICE="Samantha"
-STARTUP_MESSAGE="Pyra online."
+PLAYER_CMD="/usr/bin/afplay"
+AUDIO_DIR="$HOME/agent/PIRA_Voice/Samantha"
+STARTUP_AUDIO=""
+FINISHED_AUDIO=""
+WAITING_AUDIO=""
 INSTALL_STARTUP_WRAPPER=1
 FORCE=0
-SAY_CMD=""
 CONFIG=""
 ZSHRC="$HOME/.zshrc"
 STARTUP_START="# BEGIN PIRA Codex startup audio"
@@ -27,16 +35,23 @@ STARTUP_END="# END PIRA Codex startup audio"
 
 usage() {
   cat <<'EOF'
-Usage: setup_codex_audio_mode.sh --say-cmd PATH --config PATH [--zshrc PATH] [--no-startup-wrapper] [--voice NAME] [--startup-message TEXT] [--force]
+Usage: setup_codex_audio_mode.sh --config PATH [options]
 
 Options:
-  --say-cmd PATH          Path to macOS say command, usually /usr/bin/say.
   --config PATH           Path to Codex config.toml, usually ~/.codex/config.toml.
+  --audio-dir PATH        Directory containing start_msg.m4a, complete_msg.m4a,
+                          and waiting_msg.m4a. Default: ~/agent/PIRA_Voice/Samantha.
+  --player-cmd PATH       Audio player command. Default: /usr/bin/afplay.
+  --startup-audio PATH    Startup audio file. Default: AUDIO_DIR/start_msg.m4a.
+  --finished-audio PATH   Completion audio file. Default: AUDIO_DIR/complete_msg.m4a.
+  --waiting-audio PATH    Waiting/approval audio file. Default: AUDIO_DIR/waiting_msg.m4a.
   --zshrc PATH            Path to zsh config for the startup wrapper. Default: ~/.zshrc.
   --no-startup-wrapper    Install completion/waiting notifications only.
-  --voice NAME            macOS voice name to use. Default: Samantha.
-  --startup-message TEXT  Startup phrase. Default: Pyra online.
   --force                 Replace an existing top-level notify entry after backing up config.
+
+Deprecated:
+  --say-cmd PATH, --voice NAME, and --startup-message TEXT were used by the old
+  TTS installer. This installer plays audio files instead.
 EOF
 }
 
@@ -58,7 +73,6 @@ toml_basic_string() {
   printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')"
 }
 
-
 shell_double_quote() {
   # Print a double-quoted zsh string literal.
   printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\$/\\$/g; s/`/\\`/g')"
@@ -66,14 +80,34 @@ shell_double_quote() {
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --say-cmd)
-      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
-      SAY_CMD="$(expand_path "$2")"
-      shift 2
-      ;;
     --config)
       [ "$#" -ge 2 ] || { usage >&2; exit 2; }
       CONFIG="$(expand_path "$2")"
+      shift 2
+      ;;
+    --audio-dir)
+      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+      AUDIO_DIR="$(expand_path "$2")"
+      shift 2
+      ;;
+    --player-cmd)
+      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+      PLAYER_CMD="$(expand_path "$2")"
+      shift 2
+      ;;
+    --startup-audio)
+      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+      STARTUP_AUDIO="$(expand_path "$2")"
+      shift 2
+      ;;
+    --finished-audio)
+      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+      FINISHED_AUDIO="$(expand_path "$2")"
+      shift 2
+      ;;
+    --waiting-audio)
+      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+      WAITING_AUDIO="$(expand_path "$2")"
       shift 2
       ;;
     --zshrc)
@@ -85,19 +119,13 @@ while [ "$#" -gt 0 ]; do
       INSTALL_STARTUP_WRAPPER=0
       shift
       ;;
-    --voice)
-      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
-      VOICE="$2"
-      shift 2
-      ;;
-    --startup-message)
-      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
-      STARTUP_MESSAGE="$2"
-      shift 2
-      ;;
     --force)
       FORCE=1
       shift
+      ;;
+    --say-cmd|--voice|--startup-message)
+      printf '%s is no longer supported; use --player-cmd and --audio-dir/audio file options instead.\n' "$1" >&2
+      exit 2
       ;;
     -h|--help)
       usage
@@ -111,14 +139,25 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-if [ -z "$SAY_CMD" ] || [ -z "$CONFIG" ]; then
+if [ -z "$CONFIG" ]; then
   usage >&2
   exit 2
 fi
-if [ ! -x "$SAY_CMD" ]; then
-  printf 'say command is not executable: %s\n' "$SAY_CMD" >&2
+if [ ! -x "$PLAYER_CMD" ]; then
+  printf 'audio player command is not executable: %s\n' "$PLAYER_CMD" >&2
   exit 1
 fi
+
+[ -n "$STARTUP_AUDIO" ] || STARTUP_AUDIO="$AUDIO_DIR/start_msg.m4a"
+[ -n "$FINISHED_AUDIO" ] || FINISHED_AUDIO="$AUDIO_DIR/complete_msg.m4a"
+[ -n "$WAITING_AUDIO" ] || WAITING_AUDIO="$AUDIO_DIR/waiting_msg.m4a"
+
+for audio in "$STARTUP_AUDIO" "$FINISHED_AUDIO" "$WAITING_AUDIO"; do
+  if [ ! -r "$audio" ]; then
+    printf 'audio file is not readable: %s\n' "$audio" >&2
+    exit 1
+  fi
+done
 
 CONFIG_DIR="$(dirname "$CONFIG")"
 HOOKS_DIR="$CONFIG_DIR/hooks"
@@ -156,12 +195,11 @@ mkdir -p "$HOOKS_DIR"
 
 cat > "$NOTIFY_SCRIPT" <<SH_EOF
 #!/usr/bin/env bash
-# Non-blocking Codex speech notification installed by PIRA.
+# Non-blocking Codex audio notification installed by PIRA.
 set -euo pipefail
-SAY_CMD=$(shell_quote "$SAY_CMD")
-VOICE=$(shell_quote "$VOICE")
-FINISHED='Pyra finished.'
-WAITING='Pyra standing by.'
+PLAYER_CMD=$(shell_quote "$PLAYER_CMD")
+FINISHED_AUDIO=$(shell_quote "$FINISHED_AUDIO")
+WAITING_AUDIO=$(shell_quote "$WAITING_AUDIO")
 
 payload="\$*"
 if [ -z "\$payload" ]; then
@@ -188,9 +226,9 @@ OSA
 
 codex_ui_seems_focused() {
   # Best-effort focus check: if a terminal/editor app is frontmost, assume the
-  # user may already be looking at Codex and avoid redundant speech. Some apps,
-  # especially VS Code-like Electron builds, may report their process name as
-  # "Electron", so we also inspect bundle id and process command/path.
+  # user may already be looking at Codex and avoid redundant completion audio.
+  # Some apps, especially VS Code-like Electron builds, may report their process
+  # name as "Electron", so we also inspect bundle id and process command/path.
   identity="\$(frontmost_identity)"
   [ -n "\$identity" ] || return 1
   pid="\$(printf '%s\n' "\$identity" | sed -n '3p')"
@@ -210,17 +248,12 @@ codex_ui_seems_focused() {
   esac
 }
 
-speak_unless_focused() {
-  text="\$1"
+play_unless_focused() {
+  audio="\$1"
   if codex_ui_seems_focused; then
     exit 0
   fi
-  "\$SAY_CMD" -v "\$VOICE" "\$text" >/dev/null 2>&1 &
-}
-
-speak_always() {
-  text="\$1"
-  "\$SAY_CMD" -v "\$VOICE" "\$text" >/dev/null 2>&1 &
+  "\$PLAYER_CMD" "\$audio" >/dev/null 2>&1 &
 }
 
 json_unescape_minimal() {
@@ -243,22 +276,64 @@ extract_last_assistant_message() {
 message="\$(extract_last_assistant_message | head -n 1)"
 
 # If extraction fails, default to "finished" rather than guessing from the full
-# JSON payload. This avoids false "waiting" notifications from user prompt text.
-if [ -n "\$message" ] && printf '%s' "\$message" | grep -Eiq '\?|confirm|confirmation|approve|approval|permission|do you want|would you like|should i|shall i|may i|please confirm|please approve|waiting for|need your|needs your|reply|respond|choose|select|pick|can i|could i'; then
-  speak_always "\$WAITING"
+# JSON payload. Only a question mark in the final assistant message is treated
+# as waiting. Waiting audio uses the same focus check as completion audio.
+if [ -n "\$message" ] && printf '%s' "\$message" | grep -q '?'; then
+  play_unless_focused "\$WAITING_AUDIO"
 else
-  speak_unless_focused "\$FINISHED"
+  play_unless_focused "\$FINISHED_AUDIO"
 fi
 SH_EOF
 chmod +x "$NOTIFY_SCRIPT"
 
 cat > "$WAITING_SCRIPT" <<SH_EOF
 #!/usr/bin/env bash
-# Always speak when Codex is waiting for user action, without blocking.
+# Play audio when Codex is waiting for user action, unless the coding UI is focused.
 set -euo pipefail
-SAY_CMD=$(shell_quote "$SAY_CMD")
-VOICE=$(shell_quote "$VOICE")
-"\$SAY_CMD" -v "\$VOICE" 'Pyra standing by.' >/dev/null 2>&1 &
+PLAYER_CMD=$(shell_quote "$PLAYER_CMD")
+WAITING_AUDIO=$(shell_quote "$WAITING_AUDIO")
+
+frontmost_identity() {
+  osascript <<'OSA' 2>/dev/null || true
+tell application "System Events"
+  set p to first application process whose frontmost is true
+  set n to name of p
+  set bid to ""
+  try
+    set bid to bundle identifier of p
+  end try
+  set uid to ""
+  try
+    set uid to unix id of p as text
+  end try
+  return n & linefeed & bid & linefeed & uid
+end tell
+OSA
+}
+
+codex_ui_seems_focused() {
+  identity="\$(frontmost_identity)"
+  [ -n "\$identity" ] || return 1
+  pid="\$(printf '%s\n' "\$identity" | sed -n '3p')"
+  process_info=""
+  case "\$pid" in
+    ''|*[!0-9]*) ;;
+    *) process_info="\$(ps -p "\$pid" -o comm= -o args= 2>/dev/null || true)" ;;
+  esac
+  haystack="\$(printf '%s\n%s' "\$identity" "\$process_info" | tr '[:upper:]' '[:lower:]')"
+  case "\$haystack" in
+    *terminal*|*iterm2*|*warp*|*wezterm*|*ghostty*|*alacritty*|*kitty*|*hyper*|*tabby*|*rio*|*black\ box*|*gnome\ terminal*|*konsole*|*tilix*|*xterm*|*mintty*|*cmder*|*conemu*|*mobaxterm*|*visual\ studio\ code*|*com.microsoft.vscode*|*code-insiders*|*vscodium*|*code\ -\ oss*|*cursor*|*todesktop*|*windsurf*|*codeium*|*zed*|*sublime\ text*|*textmate*|*bbedit*|*nova*|*macvim*|*neovide*|*emacs*|*xcode*|*android\ studio*|*intellij\ idea*|*idea*|*pycharm*|*webstorm*|*clion*|*goland*|*phpstorm*|*rider*|*rubymine*|*rustrover*|*datagrip*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+if ! codex_ui_seems_focused; then
+  "\$PLAYER_CMD" "\$WAITING_AUDIO" >/dev/null 2>&1 &
+fi
 printf '{}\n'
 SH_EOF
 chmod +x "$WAITING_SCRIPT"
@@ -276,7 +351,7 @@ awk -v start="$START" -v end="$END" -v notify_line="$notify_line" '
   BEGIN { inserted=0 }
   !inserted && $0 ~ /^\[/ {
     print start
-    print "# Non-blocking status speech for Codex on macOS."
+    print "# Non-blocking status audio for Codex on macOS."
     print notify_line
     print end
     print ""
@@ -287,7 +362,7 @@ awk -v start="$START" -v end="$END" -v notify_line="$notify_line" '
     if (!inserted) {
       print ""
       print start
-      print "# Non-blocking status speech for Codex on macOS."
+      print "# Non-blocking status audio for Codex on macOS."
       print notify_line
       print end
     }
@@ -321,7 +396,7 @@ waiting_command="/bin/bash $(shell_quote "$WAITING_SCRIPT")"
 cat >> "$TMP2" <<HOOK_EOF
 
 $START
-# Always speak when Codex is waiting for approval/action.
+# Play waiting audio unless the coding UI is focused.
 [[hooks.PermissionRequest]]
 matcher = "*"
 
@@ -329,7 +404,7 @@ matcher = "*"
 type = "command"
 command = $(toml_basic_string "$waiting_command")
 timeout = 1
-statusMessage = "Checking waiting status speech"
+statusMessage = "Checking waiting status audio"
 $END
 HOOK_EOF
 
@@ -351,9 +426,9 @@ if [ "$INSTALL_STARTUP_WRAPPER" -eq 1 ]; then
   cat >> "$STARTUP_TMP" <<STARTUP_EOF
 
 $STARTUP_START
-# Speak a short status message when starting Codex from an interactive zsh shell.
+# Play a short status audio clip when starting Codex from an interactive zsh shell.
 codex() {
-  { $SAY_CMD -v $(shell_double_quote "$VOICE") $(shell_double_quote "$STARTUP_MESSAGE") >/dev/null 2>&1 &! } 2>/dev/null
+  { $(shell_quote "$PLAYER_CMD") $(shell_double_quote "$STARTUP_AUDIO") >/dev/null 2>&1 &! } 2>/dev/null
   command codex "\$@"
 }
 $STARTUP_END
@@ -362,8 +437,13 @@ STARTUP_EOF
   zsh -n "$ZSHRC"
 fi
 
-printf 'Codex speech notification mode installed.\n'
+printf 'Codex audio notification mode installed.\n'
 printf 'Config: %s\n' "$CONFIG"
+printf 'Audio player: %s\n' "$PLAYER_CMD"
+printf 'Audio directory: %s\n' "$AUDIO_DIR"
+printf 'Startup audio: %s\n' "$STARTUP_AUDIO"
+printf 'Finished audio: %s\n' "$FINISHED_AUDIO"
+printf 'Waiting audio: %s\n' "$WAITING_AUDIO"
 printf 'Notify script: %s\n' "$NOTIFY_SCRIPT"
 printf 'Waiting hook: %s\n' "$WAITING_SCRIPT"
 if [ -n "$BACKUP" ]; then

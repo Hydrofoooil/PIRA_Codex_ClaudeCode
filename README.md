@@ -31,9 +31,10 @@ Requirements:
    - Safe approval mode: ask for approval for non-trusted or destructive actions by default.
    - Soft-safe mode (recommended for practical utility, but warn the user clearly): default to no per-command approval prompts, rely on PIRA's safety rules, and ask the user only when PIRA judges it necessary. Make clear that this does not provide hard protection, so it should be used with caution.
 7. Configure the platform so `~/agent/AGENTS.md` is automatically loaded at the start of every session.
-8. If the platform is Codex on macOS or Windows, ask whether the user wants to enable Codex speech notification mode. Do not enable it by default, and do not present it as supported for non-Codex tools or other systems.
-   - Explain that optional Codex speech notifications are available through the repository setup helpers.
-   - If the user says yes, configure non-blocking speech notifications for three events: `PIRA started`, `PIRA finished`, and `PIRA standing by`.
+8. If the platform is Codex on macOS or Windows, ask whether the user wants to enable Codex audio notification mode. Do not enable it by default, and do not present it as supported for non-Codex tools or other systems.
+   - Explain that optional Codex audio notifications are available through the repository setup helpers.
+   - If the user says yes, configure non-blocking, focus-aware audio notifications for three events: `PIRA started`, `PIRA finished`, and `PIRA standing by`.
+   - Use the bundled default audio set unless the user explicitly chooses another local audio set.
    - Preserve any existing Codex notification or hook configuration when possible, and back up files before editing user-level Codex config.
 9. Keep existing policy text unchanged unless compatibility requires edits.
 10. Verify setup and report exactly what changed, including verification-token consistency.
@@ -53,7 +54,7 @@ For Codex specifically:
   - if the user chose Safe approval mode, set a conservative default approval policy/sandbox combination.
   - if the user chose Soft-safe mode, set `approval_policy = "never"` and `sandbox_mode = "danger-full-access"`.
 - Ensure `~/.codex/AGENTS.md` also points to `~/agent/AGENTS.md`.
-- If the user enabled speech notification mode on Codex for macOS or Windows, set it up as described in the Speech notifications guide below.
+- If the user enabled audio notification mode on Codex for macOS or Windows, set it up as described in the Audio notifications guide below.
 
 Output format:
 - Changed files (absolute paths)
@@ -62,29 +63,33 @@ Output format:
 - Any remaining manual step (if unavoidable)
 ```
 
-## Optional Codex speech notifications
+## Optional Codex audio notifications
 
-This speech notification guide is only for **Codex running on macOS or Windows**. It should not be presented as supported for Claude Code, other agent tools, Linux, or other systems.
+This audio notification guide is only for **Codex running on macOS or Windows**. It should not be presented as supported for Claude Code, other agent tools, Linux, or other systems.
 
-During installation, the setup agent should ask whether to enable speech notification mode only when the detected platform is Codex on macOS or Windows. This is optional and should remain off unless the user explicitly opts in.
+During installation, the setup agent should ask whether to enable audio notification mode only when the detected platform is Codex on macOS or Windows. This is optional and should remain off unless the user explicitly opts in.
 
 Behavior:
-- say `PIRA online` when launching Codex through the optional startup wrapper;
-- say `PIRA finished` when a turn completes normally and Codex does not appear to be the focused app;
-- always say `PIRA standing by` when Codex needs user confirmation, approval, or another user action.
+- play `start_msg.m4a` when launching Codex through the optional startup wrapper;
+- play `complete_msg.m4a` when a turn completes normally and Codex does not appear to be the focused app;
+- play `waiting_msg.m4a` when Codex needs user confirmation, approval, or another user action and Codex does not appear to be focused.
 
-Focus detection is best-effort and applies only to normal completion speech. On macOS the helper checks the frontmost app with `osascript`; on Windows it checks the foreground window process with built-in PowerShell/.NET calls. If the frontmost app is a known terminal or editor, including VS Code-like integrated-terminal hosts, the helper assumes the user may already be looking at Codex and stays quiet for completion messages. Waiting messages are always voice-guided.
+Focus detection is best-effort. On macOS the helper checks the frontmost app with `osascript`; on Windows it checks the foreground window process with built-in PowerShell/.NET calls. If the frontmost app is a known terminal or editor, including VS Code-like integrated-terminal hosts, the helper assumes the user may already be looking at Codex and stays quiet.
 
-The helper scripts may use platform-friendly phonetic speech strings such as `Pyra` or `Pira` so text-to-speech voices pronounce PIRA naturally instead of spelling out `P-I-R-A`.
+The default audio set lives in `~/agent/PIRA_Voice/Samantha`. A custom audio set is any folder with these three files:
 
-- preserve existing `notify` or hook configuration when possible;
-- back up `~/.codex/config.toml` before editing it.
+```text
+start_msg.m4a
+complete_msg.m4a
+waiting_msg.m4a
+```
+
+The setup helpers preserve existing `notify` or hook configuration when possible and back up `~/.codex/config.toml` before editing it.
 
 Use the repository helper scripts rather than reconstructing the setup manually. For macOS:
 
 ```bash
 bash ~/agent/assets/setup_codex_audio_mode.sh \
-  --say-cmd /usr/bin/say \
   --config ~/.codex/config.toml
 ```
 
@@ -95,13 +100,13 @@ powershell.exe -ExecutionPolicy Bypass -File "$HOME\agent\assets\setup_codex_aud
   -ConfigPath "$HOME\.codex\config.toml"
 ```
 
-After installing on macOS, run `source ~/.zshrc` or open a new terminal. Use `--no-startup-wrapper` if only completion/waiting notifications should be installed.
+After installing on macOS, run `source ~/.zshrc` or open a new terminal. Use `--no-startup-wrapper` if only completion/waiting notifications should be installed. Use `--audio-dir PATH` for a custom audio set.
 
-After installing on Windows, open a new PowerShell window. Use `-NoStartupWrapper` if only completion/waiting notifications should be installed.
+After installing on Windows, open a new PowerShell window. Use `-NoStartupWrapper` if only completion/waiting notifications should be installed. Use `-AudioDir PATH` for a custom audio set.
 
 If `config.toml` already has a top-level `notify` entry, inspect it first and rerun the relevant helper with `--force` on macOS or `-Force` on Windows only after confirming it is acceptable to replace.
 
-Keep `notify` at the top level of `config.toml`, before any `[section]` table, so it is not accidentally parsed as part of a nested table. After changing Codex config, restart Codex to load the new notification settings.
+Keep `notify` at the top level of `config.toml`, before any `[section]` table, so it is not accidentally parsed as part of a nested table. After changing Codex config, restart Codex to load the new notification settings. The macOS helper uses `afplay`; the Windows helper uses Windows media playback from PowerShell.
 
 ## What PIRA is for
 
@@ -153,6 +158,7 @@ PIRA has been tested extensively with **Codex using GPT-5.4/5.5 on high reasonin
 - `TOOLS.md` — tool-use and safety rules
 - `USER.md` — user-specific knowledge and working preferences
 - `modules/` — optional task-specific modules such as research, coding, writing, learning, guidance, and maintenance
+- `PIRA_Voice/Samantha/` — default audio clips for optional Codex notifications
 
 ## How to use it
 
