@@ -2,10 +2,10 @@
 Install optional Codex audio notifications for Windows.
 
 This script plays local audio files instead of using text-to-speech. It creates
-non-blocking PowerShell hooks and updates Codex config.toml so normal completion
-can play complete_msg.m4a and focus-aware waiting states play waiting_msg.m4a. By
-default it also installs a PowerShell profile wrapper that plays start_msg.m4a
-when launching `codex`.
+non-blocking PowerShell hooks and updates Codex config.toml so only the direct
+user-facing agent can play complete_msg.m4a and focus-aware waiting_msg.m4a;
+subagent turns stay silent. By default it also installs a PowerShell profile
+wrapper that plays start_msg.m4a when launching `codex`.
 
 Project default audio set: $HOME\agent\PIRA_Voice\Samantha
 
@@ -148,7 +148,7 @@ function Add-PermissionHook {
     $block = @"
 
 $StartMarker
-# Play waiting audio unless the coding UI is focused.
+# Play waiting audio only for the user-facing agent unless the coding UI is focused.
 [[hooks.PermissionRequest]]
 matcher = "*"
 
@@ -368,10 +368,45 @@ function Start-Audio {
     Start-Process -FilePath __POWERSHELL_CMD__ -ArgumentList ($args -join " ") -WindowStyle Hidden | Out-Null
 }
 
+function Get-TurnIdFromPayload {
+    param([AllowEmptyString()][string]$Payload)
+    try {
+        if ([string]::IsNullOrWhiteSpace($Payload)) { return "" }
+        $json = $Payload | ConvertFrom-Json
+        if ($json.PSObject.Properties.Name -contains "turn_id") { return [string]$json.turn_id }
+        if ($json.PSObject.Properties.Name -contains "turn-id") { return [string]$json.'turn-id' }
+    } catch {}
+    if ($Payload -match '"turn[-_]id"\s*:\s*"([^"\\]+)"') { return $Matches[1] }
+    return ""
+}
+
+function Test-SubagentPayload {
+    param([AllowEmptyString()][string]$Payload)
+    $turnId = Get-TurnIdFromPayload $Payload
+    if ([string]::IsNullOrWhiteSpace($turnId)) { return $false }
+    $sessionsDir = $env:PIRA_CODEX_SESSIONS_DIR
+    if ([string]::IsNullOrWhiteSpace($sessionsDir)) { $sessionsDir = Join-Path $HOME ".codex\sessions" }
+    if (-not (Test-Path -LiteralPath $sessionsDir -PathType Container)) { return $false }
+    try {
+        $files = Get-ChildItem -LiteralPath $sessionsDir -Recurse -Filter "*.jsonl" -File -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 200
+        foreach ($file in $files) {
+            if (Select-String -LiteralPath $file.FullName -SimpleMatch $turnId -Quiet -ErrorAction SilentlyContinue) {
+                $firstLine = Get-Content -LiteralPath $file.FullName -TotalCount 1 -ErrorAction SilentlyContinue
+                return [regex]::IsMatch([string]$firstLine, '"subagent"')
+            }
+        }
+    } catch {}
+    return $false
+}
+
 $payload = ($ArgsFromCodex -join " ")
 if ([string]::IsNullOrWhiteSpace($payload)) {
     $payload = [Console]::In.ReadToEnd()
 }
+
+if (Test-SubagentPayload $payload) { exit 0 }
 
 $message = ""
 try {
@@ -403,7 +438,9 @@ $notifyContent = $notifyContent.Replace('__POWERSHELL_CMD__', (ConvertTo-PowerSh
 Write-Utf8NoBom $notifyScript $notifyContent
 
 $waitingContent = @'
-# Play audio when Codex is waiting for user action, unless the coding UI is focused.
+# Play audio when the user-facing Codex agent is waiting for user action.
+param([Parameter(ValueFromRemainingArguments = $true)][string[]]$ArgsFromCodex)
+
 $ErrorActionPreference = "SilentlyContinue"
 $PlayScript = Join-Path $PSScriptRoot "pira_play_audio.ps1"
 $WaitingAudio = __WAITING_AUDIO__
@@ -452,6 +489,48 @@ function Test-CodexUiSeemsFocused {
         "rustrover64", "rustrover", "datagrip64", "datagrip", "androidstudio64",
         "studio64"
     ) -contains $processName
+}
+
+function Get-TurnIdFromPayload {
+    param([AllowEmptyString()][string]$Payload)
+    try {
+        if ([string]::IsNullOrWhiteSpace($Payload)) { return "" }
+        $json = $Payload | ConvertFrom-Json
+        if ($json.PSObject.Properties.Name -contains "turn_id") { return [string]$json.turn_id }
+        if ($json.PSObject.Properties.Name -contains "turn-id") { return [string]$json.'turn-id' }
+    } catch {}
+    if ($Payload -match '"turn[-_]id"\s*:\s*"([^"\\]+)"') { return $Matches[1] }
+    return ""
+}
+
+function Test-SubagentPayload {
+    param([AllowEmptyString()][string]$Payload)
+    $turnId = Get-TurnIdFromPayload $Payload
+    if ([string]::IsNullOrWhiteSpace($turnId)) { return $false }
+    $sessionsDir = $env:PIRA_CODEX_SESSIONS_DIR
+    if ([string]::IsNullOrWhiteSpace($sessionsDir)) { $sessionsDir = Join-Path $HOME ".codex\sessions" }
+    if (-not (Test-Path -LiteralPath $sessionsDir -PathType Container)) { return $false }
+    try {
+        $files = Get-ChildItem -LiteralPath $sessionsDir -Recurse -Filter "*.jsonl" -File -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 200
+        foreach ($file in $files) {
+            if (Select-String -LiteralPath $file.FullName -SimpleMatch $turnId -Quiet -ErrorAction SilentlyContinue) {
+                $firstLine = Get-Content -LiteralPath $file.FullName -TotalCount 1 -ErrorAction SilentlyContinue
+                return [regex]::IsMatch([string]$firstLine, '"subagent"')
+            }
+        }
+    } catch {}
+    return $false
+}
+
+$payload = ($ArgsFromCodex -join " ")
+if ([string]::IsNullOrWhiteSpace($payload) -and -not [Console]::IsInputRedirected) { $payload = "" }
+elseif ([string]::IsNullOrWhiteSpace($payload)) { $payload = [Console]::In.ReadToEnd() }
+
+if (Test-SubagentPayload $payload) {
+    Write-Output "{}"
+    exit 0
 }
 
 if (-not (Test-CodexUiSeemsFocused)) {

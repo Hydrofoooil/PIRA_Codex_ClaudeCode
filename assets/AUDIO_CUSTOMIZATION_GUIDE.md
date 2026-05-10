@@ -79,7 +79,7 @@ Ask PIRA to do these checks before installing the files:
 5. Normalize loudness consistently across all three clips.
 6. Convert/export to `.m4a` using AAC.
 7. Play or preview the clips locally when possible.
-8. Install with the platform helper and verify Codex config still has top-level `notify`.
+8. Install with the platform helper and verify Codex config still has top-level `notify` and subagent-suppression guards in the generated hooks.
 
 If `ffmpeg` and `ffprobe` are available, PIRA can usually handle the full postprocessing pipeline. If they are missing, ask PIRA to use built-in platform tools when feasible or tell you the exact missing dependency.
 
@@ -159,7 +159,7 @@ First verify that start_msg.m4a, complete_msg.m4a, and waiting_msg.m4a exist and
 ```text
 Please diagnose my PIRA Codex audio notifications.
 
-Check the installed audio folder, file names, codec/duration/loudness if tools are available, Codex config notify placement, permission/waiting hooks, and startup wrapper. Do not overwrite config until you explain the likely problem. If a fix is safe and narrow, apply it after a safety review and verify the result.
+Check the installed audio folder, file names, codec/duration/loudness if tools are available, Codex config notify placement, permission/waiting hooks, subagent-suppression guards, and startup wrapper. Do not overwrite config until you explain the likely problem. If a fix is safe and narrow, apply it after a safety review and verify the result.
 ```
 
 ## Voice-content suggestions

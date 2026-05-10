@@ -71,10 +71,10 @@ During installation, the setup agent should ask whether to enable audio notifica
 
 Behavior:
 - play `start_msg.m4a` when launching Codex through the optional startup wrapper;
-- play `complete_msg.m4a` when a turn completes normally and Codex does not appear to be the focused app;
-- play `waiting_msg.m4a` when Codex needs user confirmation, approval, or another user action and Codex does not appear to be focused.
+- for the direct user-facing Codex agent only, play `complete_msg.m4a` when a turn completes normally and Codex does not appear to be the focused app;
+- for the direct user-facing Codex agent only, play `waiting_msg.m4a` when Codex needs user confirmation, approval, or another user action and Codex does not appear to be focused.
 
-Focus detection is best-effort. On macOS the helper checks the frontmost app with `osascript`; on Windows it checks the foreground window process with built-in PowerShell/.NET calls. If the frontmost app is a known terminal or editor, including VS Code-like integrated-terminal hosts, the helper assumes the user may already be looking at Codex and stays quiet.
+Focus detection is best-effort. On macOS the helper checks the frontmost app with `osascript`; on Windows it checks the foreground window process with built-in PowerShell/.NET calls. If the frontmost app is a known terminal or editor, including VS Code-like integrated-terminal hosts, the helper assumes the user may already be looking at Codex and stays quiet. Subagent turns are suppressed by detecting Codex session metadata, so delegated agents do not produce completion or waiting audio.
 
 The default audio set lives in `~/agent/PIRA_Voice/Samantha`. A custom audio set is any folder with these three files:
 

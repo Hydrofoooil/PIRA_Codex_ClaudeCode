@@ -2,10 +2,10 @@
 # Install optional Codex audio notifications for macOS.
 #
 # This script avoids Python and other non-default dependencies. It creates
-# non-blocking Bash hooks, updates Codex config.toml so normal completion can
-# play a finished audio clip and waiting states always play a standing-by audio
-# clip, and optionally installs a zsh wrapper so starting Codex plays an online
-# audio clip.
+# non-blocking Bash hooks, updates Codex config.toml so the direct user-facing
+# agent can play finished and waiting audio while subagent turns stay silent,
+# and optionally installs a zsh wrapper so starting Codex plays an online audio
+# clip.
 #
 # Project default audio set: ~/agent/PIRA_Voice/Samantha
 # Example:
@@ -264,6 +264,23 @@ json_unescape_minimal() {
       -e 's/\\\\\\\\/\\\\/g'
 }
 
+extract_turn_id() {
+  printf '%s' "\$payload" | tr '\n' ' ' | sed -nE \\
+    's/.*"turn[-_]id"[[:space:]]*:[[:space:]]*"([^"\\\\]+)".*/\\1/p' | head -n 1
+}
+
+turn_is_from_subagent() {
+  turn_id="\$(extract_turn_id)"
+  [ -n "\$turn_id" ] || return 1
+  sessions_dir="\${PIRA_CODEX_SESSIONS_DIR:-\$HOME/.codex/sessions}"
+  [ -d "\$sessions_dir" ] || return 1
+  session_file="\$(find "\$sessions_dir" -type f -name '*.jsonl' -print 2>/dev/null \\
+    | xargs grep -l "\$turn_id" 2>/dev/null \\
+    | head -n 1 || true)"
+  [ -n "\$session_file" ] || return 1
+  head -n 1 "\$session_file" 2>/dev/null | grep -q '"subagent"'
+}
+
 extract_last_assistant_message() {
   # Best-effort extraction without Python or jq. We intentionally inspect only
   # the final assistant message, not the full payload, to avoid classifying the
@@ -272,6 +289,10 @@ extract_last_assistant_message() {
     's/.*"last[-_]assistant[-_]message"[[:space:]]*:[[:space:]]*"(([^"\\\\]|\\\\.)*)".*/\\1/p' \\
     | json_unescape_minimal
 }
+
+if turn_is_from_subagent; then
+  exit 0
+fi
 
 message="\$(extract_last_assistant_message | head -n 1)"
 
@@ -288,10 +309,32 @@ chmod +x "$NOTIFY_SCRIPT"
 
 cat > "$WAITING_SCRIPT" <<SH_EOF
 #!/usr/bin/env bash
-# Play audio when Codex is waiting for user action, unless the coding UI is focused.
+# Play audio when the user-facing Codex agent is waiting for user action.
 set -euo pipefail
 PLAYER_CMD=$(shell_quote "$PLAYER_CMD")
 WAITING_AUDIO=$(shell_quote "$WAITING_AUDIO")
+
+payload="\$*"
+if [ -z "\$payload" ] && [ ! -t 0 ]; then
+  payload="\$(cat || true)"
+fi
+
+extract_turn_id() {
+  printf '%s' "\$payload" | tr '\n' ' ' | sed -nE \\
+    's/.*"turn[-_]id"[[:space:]]*:[[:space:]]*"([^"\\\\]+)".*/\\1/p' | head -n 1
+}
+
+turn_is_from_subagent() {
+  turn_id="\$(extract_turn_id)"
+  [ -n "\$turn_id" ] || return 1
+  sessions_dir="\${PIRA_CODEX_SESSIONS_DIR:-\$HOME/.codex/sessions}"
+  [ -d "\$sessions_dir" ] || return 1
+  session_file="\$(find "\$sessions_dir" -type f -name '*.jsonl' -print 2>/dev/null \\
+    | xargs grep -l "\$turn_id" 2>/dev/null \\
+    | head -n 1 || true)"
+  [ -n "\$session_file" ] || return 1
+  head -n 1 "\$session_file" 2>/dev/null | grep -q '"subagent"'
+}
 
 frontmost_identity() {
   osascript <<'OSA' 2>/dev/null || true
@@ -330,6 +373,11 @@ codex_ui_seems_focused() {
       ;;
   esac
 }
+
+if turn_is_from_subagent; then
+  printf '{}\n'
+  exit 0
+fi
 
 if ! codex_ui_seems_focused; then
   "\$PLAYER_CMD" "\$WAITING_AUDIO" >/dev/null 2>&1 &
@@ -397,7 +445,7 @@ waiting_command="/bin/bash $(shell_quote "$WAITING_SCRIPT")"
 cat >> "$TMP2" <<HOOK_EOF
 
 $START
-# Play waiting audio unless the coding UI is focused.
+# Play waiting audio only for the user-facing agent unless the coding UI is focused.
 [[hooks.PermissionRequest]]
 matcher = "*"
 
