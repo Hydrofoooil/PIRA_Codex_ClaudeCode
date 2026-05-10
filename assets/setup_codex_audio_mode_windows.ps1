@@ -115,20 +115,21 @@ function Insert-TopLevelNotify {
     return $Text + "`r`n" + $block
 }
 
-function Ensure-CodexHooksFeature {
+function Ensure-HooksFeature {
     param([Parameter(Mandatory = $true)][string]$Text)
     $featuresMatch = [regex]::Match($Text, '(?ms)^\[features\]\s*\r?\n(?<body>.*?)(?=^\[|\z)')
     if ($featuresMatch.Success) {
         $body = $featuresMatch.Groups['body'].Value
-        if ($body -match '(?m)^\s*codex_hooks\s*=') {
-            $body = [regex]::Replace($body, '(?m)^\s*codex_hooks\s*=.*$', 'codex_hooks = true')
+        if ($body -match '(?m)^\s*hooks\s*=') {
+            $body = [regex]::Replace($body, '(?m)^\s*hooks\s*=.*$', 'hooks = true')
         } else {
-            $body = "codex_hooks = true`r`n" + $body
+            $body = "hooks = true`r`n" + $body
         }
+        $body = [regex]::Replace($body, '(?m)^\s*codex_hooks\s*=.*\r?\n?', '')
         $replacement = "[features]`r`n" + $body
         return $Text.Substring(0, $featuresMatch.Index) + $replacement + $Text.Substring($featuresMatch.Index + $featuresMatch.Length)
     }
-    $block = "[features]`r`ncodex_hooks = true`r`n`r`n"
+    $block = "[features]`r`nhooks = true`r`n`r`n"
     $match = [regex]::Match($Text, '(?m)^\[')
     if ($match.Success) {
         return $Text.Insert($match.Index, $block)
@@ -471,7 +472,7 @@ Write-Utf8NoBom $waitingScript $waitingContent
 $newText = Remove-TopLevelNotify $textWithoutManaged
 $notifyLine = 'notify = [' + (ConvertTo-TomlBasicString $PowerShellCmd) + ', "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ' + (ConvertTo-TomlBasicString $notifyScript) + ']'
 $newText = Insert-TopLevelNotify $newText $notifyLine
-$newText = Ensure-CodexHooksFeature $newText
+$newText = Ensure-HooksFeature $newText
 $newText = Add-PermissionHook $newText $waitingScript $PowerShellCmd
 Write-Utf8NoBom $config $newText
 

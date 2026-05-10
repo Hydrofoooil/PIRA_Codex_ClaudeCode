@@ -370,24 +370,25 @@ awk -v start="$START" -v end="$END" -v notify_line="$notify_line" '
 ' "$TMP2" > "$TMP3"
 cp "$TMP3" "$TMP2"
 
-# Ensure [features] contains codex_hooks = true.
+# Ensure [features] contains hooks = true and remove deprecated codex_hooks.
 if grep -Eq '^\[features\][[:space:]]*$' "$TMP2"; then
   awk '
     /^\[features\][[:space:]]*$/ { in_features=1; printed=0; print; next }
     in_features && /^\[/ {
-      if (!printed) print "codex_hooks = true"
+      if (!printed) print "hooks = true"
       in_features=0
     }
-    in_features && /^[[:space:]]*codex_hooks[[:space:]]*=/ { print "codex_hooks = true"; printed=1; next }
+    in_features && /^[[:space:]]*hooks[[:space:]]*=/ { print "hooks = true"; printed=1; next }
+    in_features && /^[[:space:]]*codex_hooks[[:space:]]*=/ { next }
     { print }
-    END { if (in_features && !printed) print "codex_hooks = true" }
+    END { if (in_features && !printed) print "hooks = true" }
   ' "$TMP2" > "$TMP3"
 else
   awk '
     BEGIN { inserted=0 }
-    !inserted && /^\[/ { print "[features]"; print "codex_hooks = true"; print ""; inserted=1 }
+    !inserted && /^\[/ { print "[features]"; print "hooks = true"; print ""; inserted=1 }
     { print }
-    END { if (!inserted) { print "[features]"; print "codex_hooks = true" } }
+    END { if (!inserted) { print "[features]"; print "hooks = true" } }
   ' "$TMP2" > "$TMP3"
 fi
 cp "$TMP3" "$TMP2"
