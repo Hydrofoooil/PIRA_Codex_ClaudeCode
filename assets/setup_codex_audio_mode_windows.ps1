@@ -193,10 +193,13 @@ function Install-StartupWrapper {
 $StartupStartMarker
 # Play a short startup audio notification, then delegate to the real Codex CLI.
 # Remove this block or restore the .bak file to disable startup audio.
+# Stay silent for nested `codex ...` commands launched by an existing Codex agent.
 function codex {
     `$piraCodexCmd = $(ConvertTo-PowerShellSingleQuotedString $codexPath)
     `$piraPlayScript = $(ConvertTo-PowerShellSingleQuotedString $PlayScript)
-    if (Test-Path -LiteralPath `$piraPlayScript) {
+    `$piraRunningUnderCodexExec = (`$env:CODEX_CI -eq "1") -or (-not [string]::IsNullOrWhiteSpace(`$env:CODEX_THREAD_ID))
+    `$piraAllowNestedAudio = @("1", "true", "TRUE", "yes", "YES") -contains `$env:PIRA_CODEX_ALLOW_NESTED_AUDIO
+    if ((-not `$piraRunningUnderCodexExec -or `$piraAllowNestedAudio) -and (Test-Path -LiteralPath `$piraPlayScript)) {
         `$piraAudioArgs = $(ConvertTo-PowerShellSingleQuotedString $audioArgLine)
         Start-Process -FilePath $(ConvertTo-PowerShellSingleQuotedString $PowerShellCmd) -ArgumentList `$piraAudioArgs -WindowStyle Hidden | Out-Null
     }
@@ -306,6 +309,14 @@ $ErrorActionPreference = "SilentlyContinue"
 $FinishedAudio = __FINISHED_AUDIO__
 $WaitingAudio = __WAITING_AUDIO__
 $PlayScript = Join-Path $PSScriptRoot "pira_play_audio.ps1"
+
+function Test-RunningUnderCodexExec {
+    return ($env:CODEX_CI -eq "1") -or (-not [string]::IsNullOrWhiteSpace($env:CODEX_THREAD_ID))
+}
+
+if ((Test-RunningUnderCodexExec) -and -not (@("1", "true", "TRUE", "yes", "YES") -contains $env:PIRA_CODEX_ALLOW_NESTED_AUDIO)) {
+    exit 0
+}
 
 function Quote-ProcessArg {
     param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Value)
@@ -444,6 +455,15 @@ param([Parameter(ValueFromRemainingArguments = $true)][string[]]$ArgsFromCodex)
 $ErrorActionPreference = "SilentlyContinue"
 $PlayScript = Join-Path $PSScriptRoot "pira_play_audio.ps1"
 $WaitingAudio = __WAITING_AUDIO__
+
+function Test-RunningUnderCodexExec {
+    return ($env:CODEX_CI -eq "1") -or (-not [string]::IsNullOrWhiteSpace($env:CODEX_THREAD_ID))
+}
+
+if ((Test-RunningUnderCodexExec) -and -not (@("1", "true", "TRUE", "yes", "YES") -contains $env:PIRA_CODEX_ALLOW_NESTED_AUDIO)) {
+    Write-Output "{}"
+    exit 0
+}
 
 function Quote-ProcessArg {
     param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Value)

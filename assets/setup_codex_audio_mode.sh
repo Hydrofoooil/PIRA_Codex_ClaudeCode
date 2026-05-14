@@ -201,6 +201,19 @@ PLAYER_CMD=$(shell_quote "$PLAYER_CMD")
 FINISHED_AUDIO=$(shell_quote "$FINISHED_AUDIO")
 WAITING_AUDIO=$(shell_quote "$WAITING_AUDIO")
 
+# Codex sets these variables for commands run by an existing agent turn.
+# If that command launches a nested `codex ...`, keep the child session silent.
+running_under_codex_exec() {
+  [ "\${CODEX_CI:-}" = "1" ] || [ -n "\${CODEX_THREAD_ID:-}" ]
+}
+
+if running_under_codex_exec; then
+  case "\${PIRA_CODEX_ALLOW_NESTED_AUDIO:-}" in
+    1|true|TRUE|yes|YES) ;;
+    *) exit 0 ;;
+  esac
+fi
+
 payload="\$*"
 if [ -z "\$payload" ]; then
   payload="\$(cat || true)"
@@ -313,6 +326,19 @@ cat > "$WAITING_SCRIPT" <<SH_EOF
 set -euo pipefail
 PLAYER_CMD=$(shell_quote "$PLAYER_CMD")
 WAITING_AUDIO=$(shell_quote "$WAITING_AUDIO")
+
+# Codex sets these variables for commands run by an existing agent turn.
+# If that command launches a nested `codex ...`, keep the child session silent.
+running_under_codex_exec() {
+  [ "\${CODEX_CI:-}" = "1" ] || [ -n "\${CODEX_THREAD_ID:-}" ]
+}
+
+if running_under_codex_exec; then
+  case "\${PIRA_CODEX_ALLOW_NESTED_AUDIO:-}" in
+    1|true|TRUE|yes|YES) ;;
+    *) printf '{}\n'; exit 0 ;;
+  esac
+fi
 
 payload="\$*"
 if [ -z "\$payload" ] && [ ! -t 0 ]; then
@@ -476,8 +502,12 @@ if [ "$INSTALL_STARTUP_WRAPPER" -eq 1 ]; then
 
 $STARTUP_START
 # Play a short status audio clip when starting Codex from an interactive zsh shell.
+# Stay silent for nested `codex ...` commands launched by an existing Codex agent.
 codex() {
-  { $(shell_quote "$PLAYER_CMD") $(shell_double_quote "$STARTUP_AUDIO") >/dev/null 2>&1 &! } 2>/dev/null
+  if { [ "\${CODEX_CI:-}" != "1" ] && [ -z "\${CODEX_THREAD_ID:-}" ]; } || \
+     case "\${PIRA_CODEX_ALLOW_NESTED_AUDIO:-}" in 1|true|TRUE|yes|YES) true ;; *) false ;; esac; then
+    { $(shell_quote "$PLAYER_CMD") $(shell_double_quote "$STARTUP_AUDIO") >/dev/null 2>&1 &! } 2>/dev/null
+  fi
   command codex "\$@"
 }
 $STARTUP_END
