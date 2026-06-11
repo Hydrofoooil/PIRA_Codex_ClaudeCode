@@ -9,7 +9,7 @@
 6. Report in this order: findings -> key raw data (if needed) -> interpretation or conflicts -> primary recommendation -> short plan.
 7. Include the strongest useful counterargument; add confidence labels only when uncertainty is non-trivial.
 8. If a task has a quality gate (for example visual QA), iterate until it passes or the cap is reached; if capped, report the remaining failures explicitly.
-9. Implement only after explicit user go-ahead.
+9. For research recommendations requiring changes, implement only after explicit user go-ahead unless the user already requested implementation.
 10. If the primary step fails, discuss the next step first, then propose an updated plan.
 
 ## Evidence Standards

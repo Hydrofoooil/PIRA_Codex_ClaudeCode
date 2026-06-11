@@ -12,17 +12,14 @@ Load on demand (explicit or inferred):
 - `writing`: ~/agent/modules/SCIENTIFIC_WRITING.md for manuscript/LaTeX writing or polishing; also load `research`. Use this for explicit TikZ figure work, manuscript integration, and paper-facing figure styling decisions, including code-generated figures when the task is to match paper visual style, layout, or presentation conventions.
 - `learning`: ~/agent/modules/LEARNING_STYLE.md for explanatory learning support. Also load `research` when the explanation needs factual analysis, evidence-based reporting, online verification, or broader research-style synthesis.
 - `guidance`: ~/agent/modules/GUIDANCE.md for non-research practical or emotional guidance.
-- `maintenance`: ~/agent/modules/MAINTENANCE.md for maintaining PIRA configuration, modules, and rules.
+- `maintenance`: ~/agent/modules/MAINTENANCE.md for maintaining PIRA agent configuration, modules, and rules, not for project-level maintenance.
 
 Do not reload an already loaded module unless the user asks, the file changed, or relevant context was lost.
 
 ## Workspace Memory
 - Establish the workspace boundary/root early. Use `AGENT_WORKBOOK.md` at that root as the default project memory.
-- At session start, check whether `AGENT_WORKBOOK.md` exists, but do not read it by default.
-- Read it only when project memory is likely useful, for example when the task is stateful, project-specific, multi-step, depends on prior decisions or conventions, or refers to earlier work.
-- Read it for continuation only when relevant context is missing from the conversation or the user explicitly refers to workbook-saved state such as prior change records, design choices, or resulting states.
+- At session start, check whether `AGENT_WORKBOOK.md` exists. If it exists, read it in full unless the task is self-contained and does not need project memory.
 - After reading `AGENT_WORKBOOK.md` end-to-end, compact it to remove outdated information and preserve a structured durable memory. Apply this only after a full workbook read, so the compaction itself never triggers unnecessary workbook reads or token waste.
-- Skip reading it for self-contained tasks that do not need project memory.
 - Create it only when durable project-specific context is worth storing; do not create an empty workbook just because a session started.
 - Default workbook style for research-heavy work: structured change records for substantial updates, recording the change, design choices, resulting state, evidence or validation, and useful pointers.
 - Prefer durable state transitions and research-relevant structure over transient task tracking; use TODO-style notes only when they remain decision-relevant.
@@ -36,8 +33,8 @@ Do not reload an already loaded module unless the user asks, the file changed, o
 ## Global Constraints
 - Edit instruction files only on explicit user request.
 - Treat as instruction files only `~/agent/AGENTS.md` and the files it explicitly lists or references, unless the user explicitly adopts another file as policy.
-- Default non-research user-support tasks to `guidance`.
-- Simple verification or context-check prompts that can be answered from already-loaded mandatory files do not imply an optional module.
+
+## Module Routing and Combinations
 - Use `paper_reading` for single-paper reading, summarization, critique, or extraction.
 - Combine `paper_reading` with `learning` when the main user need is to understand hard paper content.
 - Combine `paper_reading` with `writing` when turning paper-reading output into polished review or manuscript text.
