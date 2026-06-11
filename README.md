@@ -25,7 +25,7 @@ PIRA's default setup is a global machine install centered on `~/agent`. The setu
    assets/scripts/setup_pira.sh --verify
    ```
 
-On Windows, use `py -3 assets/scripts/setup_pira.py` from the repository directory. On macOS/Linux, the shell wrapper checks for Python first and can offer to install it with Homebrew on macOS.
+On Windows, use `powershell.exe -ExecutionPolicy Bypass -File assets/scripts/setup_pira.ps1` from the repository directory. On macOS/Linux, use `assets/scripts/setup_pira.sh`. The wrappers share the Python bootstrap helpers in `assets/scripts/lib/`; setup can offer to install Python with Homebrew on macOS or winget on Windows.
 
 ### Setup choices
 
@@ -61,7 +61,7 @@ The script:
 1. Detects the repository directory and ensures it is available as `~/agent` unless another `--agent-dir` is given.
 2. Initializes a private `USER.md` placeholder when needed.
 3. Removes legacy files listed in `assets/LEGACY_LIST.md` when approved.
-4. Updates or creates Codex `config.toml` so `~/agent/AGENTS.md` is loaded, with `project_doc_max_bytes = 65536`.
+4. Updates or creates Codex `config.toml` so the selected agent directory's `AGENTS.md` is loaded, with `project_doc_max_bytes = 65536`.
 5. Optionally links or copies `~/.codex/AGENTS.md` for Codex's global AGENTS discovery path.
 6. Optionally delegates audio setup to the existing platform-specific audio helper.
 7. Verifies the setup, including the PIRA verification token.

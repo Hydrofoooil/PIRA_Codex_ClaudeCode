@@ -61,7 +61,10 @@ class SetupState:
 
 
 def expand_path(value: str) -> Path:
-    return Path(os.path.expandvars(os.path.expanduser(value))).resolve()
+    path = Path(os.path.expandvars(os.path.expanduser(value)))
+    if path.is_absolute():
+        return path
+    return Path.cwd() / path
 
 
 def display_path(path: Path) -> str:
@@ -72,9 +75,26 @@ def display_path(path: Path) -> str:
         return str(path)
 
 
+def config_path_string(path: Path) -> str:
+    """Return a stable config path string without resolving symlinks."""
+    expanded = path.expanduser()
+    if not expanded.is_absolute():
+        expanded = Path.cwd() / expanded
+    home = Path.home()
+    try:
+        return "~/" + str(expanded.relative_to(home))
+    except ValueError:
+        return str(expanded)
+
+
 def backup_path(path: Path) -> Path:
-    stamp = datetime.now().strftime("%Y%m%d%H%M%S")
-    return path.with_name(f"{path.name}.bak.{stamp}")
+    stamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
+    candidate = path.with_name(f"{path.name}.bak.{stamp}")
+    suffix = 1
+    while candidate.exists() or candidate.is_symlink():
+        candidate = path.with_name(f"{path.name}.bak.{stamp}.{suffix}")
+        suffix += 1
+    return candidate
 
 
 def prompt_yes_no(question: str, default: bool = False) -> bool:
@@ -304,8 +324,10 @@ def configure_codex(
 
     existing = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
     keys = top_level_keys(existing)
+    instructions_path = state.agent_dir / "AGENTS.md"
+    instructions_ref = config_path_string(instructions_path)
     updates = {
-        "model_instructions_file": toml_string("~/agent/AGENTS.md"),
+        "model_instructions_file": toml_string(instructions_ref),
         "project_doc_max_bytes": DEFAULT_PROJECT_DOC_MAX_BYTES,
     }
     remove_keys: list[str] = []
@@ -404,16 +426,11 @@ def configure_audio(
         if not candidate.exists():
             raise RuntimeError(f"Audio file missing: {candidate}")
 
-    if system == "darwin":
-        script = state.agent_dir / "assets" / "scripts" / "setup_codex_audio_mode.sh"
-        cmd = ["bash", str(script), "--config", str(config_path), "--audio-dir", str(audio_dir)]
-        if force_audio:
-            cmd.append("--force")
-    else:
-        script = state.agent_dir / "assets" / "scripts" / "setup_codex_audio_mode_windows.ps1"
-        cmd = ["powershell.exe", "-ExecutionPolicy", "Bypass", "-File", str(script), "-ConfigPath", str(config_path), "-AudioDir", str(audio_dir)]
-        if force_audio:
-            cmd.append("-Force")
+    script = state.agent_dir / "assets" / "scripts" / "setup_codex_audio_mode.py"
+    platform_name = "macos" if system == "darwin" else "windows"
+    cmd = [sys.executable, str(script), "--platform", platform_name, "--config", str(config_path), "--audio-dir", str(audio_dir)]
+    if force_audio:
+        cmd.append("--force")
 
     if state.dry_run:
         print("DRY-RUN: would run audio setup command:")
@@ -452,7 +469,8 @@ def verify(state: SetupState, config_path: Path, skip_codex: bool) -> None:
         else:
             text = config_path.read_text(encoding="utf-8")
             keys = top_level_keys(text)
-            add("Codex config points to PIRA", keys.get("model_instructions_file") == toml_string("~/agent/AGENTS.md"), display_path(config_path))
+            expected_instructions = toml_string(config_path_string(state.agent_dir / "AGENTS.md"))
+            add("Codex config points to PIRA", keys.get("model_instructions_file") == expected_instructions, f"{display_path(config_path)} -> {expected_instructions}")
             add("Codex project_doc_max_bytes", keys.get("project_doc_max_bytes") == DEFAULT_PROJECT_DOC_MAX_BYTES, keys.get("project_doc_max_bytes", "missing"))
 
 
@@ -469,7 +487,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--force-agent-link", action="store_true", help="Move a conflicting --agent-dir aside and symlink this repo there.")
     parser.add_argument("--audio", choices=["ask", "yes", "no"], default="ask", help="Whether to install optional Codex audio notifications.")
     parser.add_argument("--audio-dir", default=None, help="Audio set directory for optional Codex audio notifications.")
-    parser.add_argument("--no-startup-wrapper", action="store_true", help="Deprecated no-op; startup audio wrappers are no longer installed.")
     parser.add_argument("--force-audio", action="store_true", help="Allow the audio helper to replace an existing notify entry.")
     parser.add_argument("--verify", action="store_true", help="Only verify the current setup; do not write.")
     parser.add_argument("--dry-run", action="store_true", help="Print planned changes without writing.")
@@ -496,8 +513,6 @@ def main(argv: list[str] | None = None) -> int:
             remove_legacy_files(state, args.legacy)
             if not args.skip_codex:
                 configure_codex(state, config_path, args.execution_mode, args.global_agents, args.replace_permissions)
-            if args.no_startup_wrapper:
-                print("OK: --no-startup-wrapper is deprecated; startup audio wrappers are no longer installed")
             configure_audio(state, args.audio, config_path, audio_dir, args.force_audio)
         if args.dry_run and not args.verify:
             print("DRY-RUN: verification skipped because planned changes were not applied")
