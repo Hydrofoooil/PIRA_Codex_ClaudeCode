@@ -6,25 +6,24 @@ Use only audio you own, generated audio you are allowed to use, or voices used w
 
 ## Required files
 
-A PIRA audio set is a folder containing these three event clips:
+A PIRA audio set is a folder containing these two event clips:
 
 ```text
-start_msg.m4a
 complete_msg.m4a
 waiting_msg.m4a
 ```
 
 Recommended meaning:
 
-- `start_msg.m4a` — PIRA started / Codex launched.
 - `complete_msg.m4a` — PIRA finished a turn.
 - `waiting_msg.m4a` — PIRA is standing by for user confirmation, approval, or another action.
 
 Recommended lengths:
 
-- startup: 1--3 seconds;
 - completion: 1--4 seconds;
 - waiting: 2--6 seconds, gentle enough to repeat occasionally.
+
+Startup audio is no longer installed. Older `start_msg.m4a` files are ignored by the current helpers.
 
 Recommended loudness target:
 
@@ -38,12 +37,10 @@ Keep raw source files separate from final notification files:
 
 ```text
 ~/agent/PIRA_Voice/MyVoice_raw/
-  start_raw.wav
   complete_raw.wav
   waiting_raw.wav
 
 ~/agent/PIRA_Voice/MyVoice/
-  start_msg.m4a
   complete_msg.m4a
   waiting_msg.m4a
 ```
@@ -53,7 +50,7 @@ The final folder can then be installed with the setup helper:
 macOS:
 
 ```bash
-bash ~/agent/assets/setup_codex_audio_mode.sh \
+bash ~/agent/assets/scripts/setup_codex_audio_mode.sh \
   --config ~/.codex/config.toml \
   --audio-dir ~/agent/PIRA_Voice/MyVoice
 ```
@@ -61,7 +58,7 @@ bash ~/agent/assets/setup_codex_audio_mode.sh \
 Windows PowerShell:
 
 ```powershell
-powershell.exe -ExecutionPolicy Bypass -File "$HOME\agent\assets\setup_codex_audio_mode_windows.ps1" `
+powershell.exe -ExecutionPolicy Bypass -File "$HOME\agent\assets\scripts\setup_codex_audio_mode_windows.ps1" `
   -ConfigPath "$HOME\.codex\config.toml" `
   -AudioDir "$HOME\agent\PIRA_Voice\MyVoice"
 ```
@@ -72,11 +69,11 @@ Restart Codex after changing audio mode or replacing installed audio files.
 
 Ask PIRA to do these checks before installing the files:
 
-1. Confirm the three final files exist and are readable.
+1. Confirm the two final files exist and are readable.
 2. Inspect duration, codec, sample rate, channels, and peak/loudness where tools are available.
 3. Trim leading/trailing silence.
 4. Add a tiny fade-in and fade-out to avoid clicks.
-5. Normalize loudness consistently across all three clips.
+5. Normalize loudness consistently across both clips.
 6. Convert/export to `.m4a` using AAC.
 7. Play or preview the clips locally when possible.
 8. Install with the platform helper and verify Codex config still has top-level `notify` and subagent-suppression guards in the generated hooks.
@@ -103,14 +100,13 @@ For especially important clips, ask PIRA for a two-pass `loudnorm` workflow. Two
 
 ```text
 Please create a custom PIRA Codex audio set from these raw clips:
-- startup: ~/agent/PIRA_Voice/MyVoice_raw/start_raw.wav
 - completion: ~/agent/PIRA_Voice/MyVoice_raw/complete_raw.wav
 - waiting: ~/agent/PIRA_Voice/MyVoice_raw/waiting_raw.wav
 
 Output folder:
 ~/agent/PIRA_Voice/MyVoice
 
-Postprocess them into start_msg.m4a, complete_msg.m4a, and waiting_msg.m4a. Please trim leading/trailing silence, add very short fades to avoid clicks, normalize them to a consistent gentle notification loudness around -19 LUFS with true peak <= -2 dBTP, convert to AAC .m4a, and verify duration/codec afterward. Use ffmpeg/ffprobe if available. Do not change Codex config yet; just prepare the files and summarize the results.
+Postprocess them into complete_msg.m4a and waiting_msg.m4a. Please trim leading/trailing silence, add very short fades to avoid clicks, normalize them to a consistent gentle notification loudness around -19 LUFS with true peak <= -2 dBTP, convert to AAC .m4a, and verify duration/codec afterward. Use ffmpeg/ffprobe if available. Do not change Codex config yet; just prepare the files and summarize the results.
 ```
 
 ### 2. Make an existing set quieter and less intrusive
@@ -121,8 +117,7 @@ Please postprocess my existing PIRA audio set to make it quieter and less intrus
 Input folder:
 ~/agent/PIRA_Voice/MyVoice
 
-Create a backup folder first, then rewrite the three final files:
-- start_msg.m4a
+Create a backup folder first, then rewrite the two final files:
 - complete_msg.m4a
 - waiting_msg.m4a
 
@@ -138,7 +133,6 @@ Input/output folder:
 ~/agent/PIRA_Voice/MyVoice
 
 Keep the semantic mapping unchanged:
-- start_msg.m4a = PIRA started
 - complete_msg.m4a = PIRA finished
 - waiting_msg.m4a = PIRA standing by
 
@@ -151,7 +145,7 @@ Postprocess only; do not rewrite the spoken content. Match loudness, remove dist
 Please install this prepared PIRA audio set for Codex:
 ~/agent/PIRA_Voice/MyVoice
 
-First verify that start_msg.m4a, complete_msg.m4a, and waiting_msg.m4a exist and are readable. Then use the bundled setup helper for my platform. Preserve existing Codex config where possible and back it up before editing. If config.toml already has a top-level notify entry, stop and show it to me before using --force or -Force. After installation, explain exactly what changed and how to disable or roll back the audio mode.
+First verify that complete_msg.m4a and waiting_msg.m4a exist and are readable. Then use the bundled setup helper for my platform. Preserve existing Codex config where possible and back it up before editing. If config.toml already has a top-level notify entry, stop and show it to me before using --force or -Force. After installation, explain exactly what changed and how to disable or roll back the audio mode.
 ```
 
 ### 5. Diagnose why audio notifications sound wrong
@@ -159,14 +153,13 @@ First verify that start_msg.m4a, complete_msg.m4a, and waiting_msg.m4a exist and
 ```text
 Please diagnose my PIRA Codex audio notifications.
 
-Check the installed audio folder, file names, codec/duration/loudness if tools are available, Codex config notify placement, permission/waiting hooks, subagent-suppression guards, and startup wrapper. Do not overwrite config until you explain the likely problem. If a fix is safe and narrow, apply it after a safety review and verify the result.
+Check the installed audio folder, file names, codec/duration/loudness if tools are available, Codex config notify placement, permission/waiting hooks, subagent-suppression guards, and absence of legacy startup wrappers. Do not overwrite config until you explain the likely problem. If a fix is safe and narrow, apply it after a safety review and verify the result.
 ```
 
 ## Voice-content suggestions
 
 If generating or recording new spoken clips, keep wording brief:
 
-- startup: "PIRA is ready." / "PI is online." / "Ready when you are."
 - completion: "Done." / "Task complete." / "I finished that."
 - waiting: "Standing by." / "I need your confirmation." / "Waiting for you."
 
@@ -176,6 +169,6 @@ Prefer calm, clear delivery over personality-heavy delivery. Notification audio 
 
 To switch to a different audio set, rerun the relevant setup helper with a different `--audio-dir` or `-AudioDir`.
 
-To disable startup audio only, remove the PIRA-managed startup wrapper block from `~/.zshrc` on macOS or from the PowerShell profile on Windows, or restore the helper-created backup.
+Legacy PIRA-managed startup wrappers are removed automatically by the current helpers. If needed, remove the marked startup wrapper block from `~/.zshrc` on macOS or from the PowerShell profile on Windows, or restore the helper-created backup.
 
 To disable completion/waiting notifications, remove the PIRA-managed `notify` and hook blocks from `~/.codex/config.toml`, or restore the helper-created `config.toml.bak.*` backup.

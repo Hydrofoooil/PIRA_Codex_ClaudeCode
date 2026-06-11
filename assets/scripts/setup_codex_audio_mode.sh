@@ -2,18 +2,18 @@
 # Install optional Codex audio notifications for macOS.
 #
 # This script avoids Python and other non-default dependencies. It creates
-# non-blocking Bash hooks, updates Codex config.toml so the direct user-facing
-# agent can play finished and waiting audio while subagent turns stay silent,
-# and optionally installs a zsh wrapper so starting Codex plays an online audio
-# clip.
+# non-blocking Bash hooks and updates Codex config.toml so the direct user-facing
+# agent can play finished and waiting audio while subagent turns stay silent.
+# Startup audio wrappers are no longer installed; legacy PIRA-managed startup
+# wrappers are removed from the configured zsh file when found.
 #
 # Project default audio set: ~/agent/PIRA_Voice/Samantha
 # Example:
-#   bash ~/agent/assets/setup_codex_audio_mode.sh \
+#   bash ~/agent/assets/scripts/setup_codex_audio_mode.sh \
 #     --config ~/.codex/config.toml
 #
 # Local custom audio example:
-#   bash ~/agent/assets/setup_codex_audio_mode.sh \
+#   bash ~/agent/assets/scripts/setup_codex_audio_mode.sh \
 #     --config ~/.codex/config.toml \
 #     --audio-dir ~/agent/PIRA_Voice/Debbie
 
@@ -23,10 +23,8 @@ START="# BEGIN PIRA Codex speech notifications"
 END="# END PIRA Codex speech notifications"
 PLAYER_CMD="/usr/bin/afplay"
 AUDIO_DIR="$HOME/agent/PIRA_Voice/Samantha"
-STARTUP_AUDIO=""
 FINISHED_AUDIO=""
 WAITING_AUDIO=""
-INSTALL_STARTUP_WRAPPER=1
 FORCE=0
 CONFIG=""
 ZSHRC="$HOME/.zshrc"
@@ -39,14 +37,14 @@ Usage: setup_codex_audio_mode.sh --config PATH [options]
 
 Options:
   --config PATH           Path to Codex config.toml, usually ~/.codex/config.toml.
-  --audio-dir PATH        Directory containing start_msg.m4a, complete_msg.m4a,
-                          and waiting_msg.m4a. Default: ~/agent/PIRA_Voice/Samantha.
+  --audio-dir PATH        Directory containing complete_msg.m4a and waiting_msg.m4a.
+                          Default: ~/agent/PIRA_Voice/Samantha.
   --player-cmd PATH       Audio player command. Default: /usr/bin/afplay.
-  --startup-audio PATH    Startup audio file. Default: AUDIO_DIR/start_msg.m4a.
   --finished-audio PATH   Completion audio file. Default: AUDIO_DIR/complete_msg.m4a.
   --waiting-audio PATH    Waiting/approval audio file. Default: AUDIO_DIR/waiting_msg.m4a.
-  --zshrc PATH            Path to zsh config for the startup wrapper. Default: ~/.zshrc.
-  --no-startup-wrapper    Install completion/waiting notifications only.
+  --zshrc PATH            zsh config to clean up legacy PIRA startup wrappers. Default: ~/.zshrc.
+  --startup-audio PATH    Deprecated and ignored; startup audio is no longer installed.
+  --no-startup-wrapper    Deprecated no-op; startup audio is no longer installed.
   --force                 Replace an existing top-level notify entry after backing up config.
 
 Deprecated:
@@ -97,7 +95,8 @@ while [ "$#" -gt 0 ]; do
       ;;
     --startup-audio)
       [ "$#" -ge 2 ] || { usage >&2; exit 2; }
-      STARTUP_AUDIO="$(expand_path "$2")"
+      printf 'Ignoring deprecated --startup-audio; startup audio is no longer installed.
+' >&2
       shift 2
       ;;
     --finished-audio)
@@ -116,7 +115,7 @@ while [ "$#" -gt 0 ]; do
       shift 2
       ;;
     --no-startup-wrapper)
-      INSTALL_STARTUP_WRAPPER=0
+      # Backward-compatible no-op: startup audio is no longer installed.
       shift
       ;;
     --force)
@@ -148,11 +147,10 @@ if [ ! -x "$PLAYER_CMD" ]; then
   exit 1
 fi
 
-[ -n "$STARTUP_AUDIO" ] || STARTUP_AUDIO="$AUDIO_DIR/start_msg.m4a"
 [ -n "$FINISHED_AUDIO" ] || FINISHED_AUDIO="$AUDIO_DIR/complete_msg.m4a"
 [ -n "$WAITING_AUDIO" ] || WAITING_AUDIO="$AUDIO_DIR/waiting_msg.m4a"
 
-for audio in "$STARTUP_AUDIO" "$FINISHED_AUDIO" "$WAITING_AUDIO"; do
+for audio in "$FINISHED_AUDIO" "$WAITING_AUDIO"; do
   if [ ! -r "$audio" ]; then
     printf 'audio file is not readable: %s\n' "$audio" >&2
     exit 1
@@ -202,7 +200,7 @@ FINISHED_AUDIO=$(shell_quote "$FINISHED_AUDIO")
 WAITING_AUDIO=$(shell_quote "$WAITING_AUDIO")
 
 # Codex sets these variables for commands run by an existing agent turn.
-# If that command launches a nested `codex ...`, keep the child session silent.
+# If that command launches a nested Codex process, keep the child session silent.
 running_under_codex_exec() {
   [ "\${CODEX_CI:-}" = "1" ] || [ -n "\${CODEX_THREAD_ID:-}" ]
 }
@@ -328,7 +326,7 @@ PLAYER_CMD=$(shell_quote "$PLAYER_CMD")
 WAITING_AUDIO=$(shell_quote "$WAITING_AUDIO")
 
 # Codex sets these variables for commands run by an existing agent turn.
-# If that command launches a nested `codex ...`, keep the child session silent.
+# If that command launches a nested Codex process, keep the child session silent.
 running_under_codex_exec() {
   [ "\${CODEX_CI:-}" = "1" ] || [ -n "\${CODEX_THREAD_ID:-}" ]
 }
@@ -486,9 +484,7 @@ HOOK_EOF
 cp "$TMP2" "$CONFIG"
 
 ZSHRC_BACKUP=""
-if [ "$INSTALL_STARTUP_WRAPPER" -eq 1 ]; then
-  mkdir -p "$(dirname "$ZSHRC")"
-  [ -f "$ZSHRC" ] || : > "$ZSHRC"
+if [ -f "$ZSHRC" ] && grep -q "$STARTUP_START" "$ZSHRC"; then
   ZSHRC_BACKUP="$ZSHRC.bak.$(date +%Y%m%d-%H%M%S)"
   cp "$ZSHRC" "$ZSHRC_BACKUP"
   STARTUP_TMP="$(mktemp)"
@@ -498,29 +494,16 @@ if [ "$INSTALL_STARTUP_WRAPPER" -eq 1 ]; then
     index($0, end) { skip=0; next }
     !skip { print }
   ' "$ZSHRC" > "$STARTUP_TMP"
-  cat >> "$STARTUP_TMP" <<STARTUP_EOF
-
-$STARTUP_START
-# Play a short status audio clip when starting Codex from an interactive zsh shell.
-# Stay silent for nested `codex ...` commands launched by an existing Codex agent.
-codex() {
-  if { [ "\${CODEX_CI:-}" != "1" ] && [ -z "\${CODEX_THREAD_ID:-}" ]; } || \
-     case "\${PIRA_CODEX_ALLOW_NESTED_AUDIO:-}" in 1|true|TRUE|yes|YES) true ;; *) false ;; esac; then
-    { $(shell_quote "$PLAYER_CMD") $(shell_double_quote "$STARTUP_AUDIO") >/dev/null 2>&1 &! } 2>/dev/null
-  fi
-  command codex "\$@"
-}
-$STARTUP_END
-STARTUP_EOF
   cp "$STARTUP_TMP" "$ZSHRC"
-  zsh -n "$ZSHRC"
+  if command -v zsh >/dev/null 2>&1; then
+    zsh -f -n "$ZSHRC"
+  fi
 fi
 
 printf 'Codex audio notification mode installed.\n'
 printf 'Config: %s\n' "$CONFIG"
 printf 'Audio player: %s\n' "$PLAYER_CMD"
 printf 'Audio directory: %s\n' "$AUDIO_DIR"
-printf 'Startup audio: %s\n' "$STARTUP_AUDIO"
 printf 'Finished audio: %s\n' "$FINISHED_AUDIO"
 printf 'Waiting audio: %s\n' "$WAITING_AUDIO"
 printf 'Notify script: %s\n' "$NOTIFY_SCRIPT"
@@ -528,9 +511,8 @@ printf 'Waiting hook: %s\n' "$WAITING_SCRIPT"
 if [ -n "$BACKUP" ]; then
   printf 'Config backup: %s\n' "$BACKUP"
 fi
-if [ "$INSTALL_STARTUP_WRAPPER" -eq 1 ]; then
-  printf 'Startup wrapper installed in: %s\n' "$ZSHRC"
+if [ -n "$ZSHRC_BACKUP" ]; then
+  printf 'Removed legacy startup wrapper from: %s\n' "$ZSHRC"
   printf 'zsh config backup: %s\n' "$ZSHRC_BACKUP"
-  printf 'Run `source %s` or open a new terminal before starting Codex.\n' "$ZSHRC"
 fi
 printf 'Restart Codex to load the new notification settings.\n'

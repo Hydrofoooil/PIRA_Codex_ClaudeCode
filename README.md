@@ -5,81 +5,86 @@ It is designed to be warm, honest about uncertainty, and evidence-first when evi
 
 ## Get started
 
+PIRA's default setup is a global machine install centered on `~/agent`. The setup script is idempotent, backs up user-level Codex files before editing them, and can be run in dry-run or verification-only mode.
+
 1. Clone the repository:
    ```bash
    git clone https://github.com/AlgebraLoveme/PIRA.git ~/agent
+   cd ~/agent
    ```
-2. Open your agent or coding tool, such as Codex or Claude Code.
-3. Paste the prompt below and let the agent finish the setup.
+2. Preview the planned changes:
+   ```bash
+   assets/scripts/setup_pira.sh --dry-run
+   ```
+3. Run setup:
+   ```bash
+   assets/scripts/setup_pira.sh
+   ```
+4. Verify later without writing:
+   ```bash
+   assets/scripts/setup_pira.sh --verify
+   ```
 
-### Prompt to paste into your agent
+On Windows, use `py -3 assets/scripts/setup_pira.py` from the repository directory. On macOS/Linux, the shell wrapper checks for Python first and can offer to install it with Homebrew on macOS.
 
-```text
-I cloned a repository containing an agent policy folder. Please set up this agent automatically. Initialize USER yourself; do not ask me to pre-create files.
+### Setup choices
 
-Requirements:
-1. Detect the repository directory.
-2. Ensure it is `~/agent`; otherwise create a symlink `~/agent -> <detected-folder>`.
-3. Initialize `~/agent/USER.md` automatically.
-   - If missing, ask for either public profile URL(s), a brief self-description, or permission to create an empty placeholder.
-   - Generate or update `USER.md` from `~/agent/assets/USER_TEMPLATE.md`.
-   - Preserve stable collaboration preferences that materially affect work.
-4. If legacy files listed in `~/agent/assets/LEGACY_LIST.md` exist, delete them during setup.
-   - Before deletion, preserve any still-needed durable policy content in the proper tracked files; do not keep obsolete schemes alive.
-5. Tell the user the agent's preferred name is `PI`, and briefly explain why.
-6. Explain the execution-mode options clearly, then ask the user to confirm which mode to use before writing platform config:
-   - Safe approval mode: ask for approval for non-trusted or destructive actions by default.
-   - Soft-safe mode (recommended for practical utility, but warn the user clearly): default to no per-command approval prompts, rely on PIRA's safety rules, and ask the user only when PIRA judges it necessary. Make clear that this does not provide hard protection, so it should be used with caution.
-7. Configure the platform so `~/agent/AGENTS.md` is automatically loaded at the start of every session.
-8. If the platform is Codex on macOS or Windows, ask whether the user wants to enable Codex audio notification mode. Do not enable it by default, and do not present it as supported for non-Codex tools or other systems.
-   - Explain that optional Codex audio notifications are available through the repository setup helpers.
-   - If the user says yes, configure non-blocking, focus-aware audio notifications for three events: `PIRA started`, `PIRA finished`, and `PIRA standing by`.
-   - Use the bundled default audio set unless the user explicitly chooses another local audio set.
-   - Preserve any existing Codex notification or hook configuration when possible, and back up files before editing user-level Codex config.
-9. Keep existing policy text unchanged unless compatibility requires edits.
-10. Verify setup and report exactly what changed, including verification-token consistency.
+The script asks before potentially sensitive choices in interactive mode. For unattended setup, pass explicit flags.
 
-Verification checklist:
-- Confirm `~/agent/AGENTS.md` exists.
-- Confirm global config points to `~/agent/AGENTS.md`.
-- If `~/agent/USER.md` exists, confirm it is loaded as mandatory context.
-- Confirm the policy supports per-workspace `AGENT_WORKBOOK.md` memory, does not require a global memory file for startup behavior, and removes files listed in `~/agent/assets/LEGACY_LIST.md` if found.
-- Start or describe a fresh-session check with only mandatory modules and confirm no load acknowledgement is printed.
-- In that fresh session, ask for the verification token and confirm it exactly matches `SOUL.md` (`31415926535897932384626433832795`).
+Execution mode:
+- `--execution-mode safe` sets `approval_policy = "on-request"` and `sandbox_mode = "workspace-write"`.
+- `--execution-mode soft-safe` sets `approval_policy = "never"` and `sandbox_mode = "danger-full-access"`; this is convenient but not a sandbox.
+- `--execution-mode keep` leaves existing approval and sandbox settings unchanged.
 
-For Codex specifically:
-- Update or create `~/.codex/config.toml` with:
-  - `model_instructions_file = "~/agent/AGENTS.md"`
-  - `project_doc_max_bytes = 65536` (keep or set)
-  - if the user chose Safe approval mode, set a conservative default approval policy/sandbox combination.
-  - if the user chose Soft-safe mode, set `approval_policy = "never"` and `sandbox_mode = "danger-full-access"`.
-- Ensure `~/.codex/AGENTS.md` also points to `~/agent/AGENTS.md`.
-- If the user enabled audio notification mode on Codex for macOS or Windows, set it up as described in the Audio notifications guide below.
+Other useful options:
+- `--yes` accepts setup confirmations, but does not enable audio unless `--audio yes` is also set.
+- `--audio yes|no|ask` controls optional Codex audio notifications.
+- `--user-mode placeholder|interactive|keep` controls `USER.md` initialization.
+- `--global-agents link|copy|skip|ask` controls whether `~/.codex/AGENTS.md` points to PIRA by symlink, copy, or not at all.
+- `--legacy remove|keep|ask` controls files listed in `assets/LEGACY_LIST.md`.
+- `--agent-dir PATH` installs against a path other than `~/agent`.
 
-Output format:
-- Changed files (absolute paths)
-- Diff summary
-- Verification results
-- Any remaining manual step (if unavoidable)
+Example non-interactive soft-safe setup without audio:
+
+```bash
+assets/scripts/setup_pira.sh \
+  --yes \
+  --execution-mode soft-safe \
+  --audio no \
+  --global-agents link \
+  --legacy remove
 ```
+
+### What setup configures
+
+The script:
+1. Detects the repository directory and ensures it is available as `~/agent` unless another `--agent-dir` is given.
+2. Initializes a private `USER.md` placeholder when needed.
+3. Removes legacy files listed in `assets/LEGACY_LIST.md` when approved.
+4. Updates or creates Codex `config.toml` so `~/agent/AGENTS.md` is loaded, with `project_doc_max_bytes = 65536`.
+5. Optionally links or copies `~/.codex/AGENTS.md` for Codex's global AGENTS discovery path.
+6. Optionally delegates audio setup to the existing platform-specific audio helper.
+7. Verifies the setup, including the PIRA verification token.
+
+If the script cannot safely handle an existing conflicting file or Codex setting, it stops or skips that action with a warning instead of silently overwriting it.
 
 ## Optional Codex audio notifications
 
 This audio notification guide is only for **Codex running on macOS or Windows**. It should not be presented as supported for Claude Code, other agent tools, Linux, or other systems.
 
-During installation, the setup agent should ask whether to enable audio notification mode only when the detected platform is Codex on macOS or Windows. This is optional and should remain off unless the user explicitly opts in.
+During installation, the setup script should ask whether to enable audio notification mode only when the detected platform is Codex on macOS or Windows. This is optional and should remain off unless the user explicitly opts in.
 
 Behavior:
-- play `start_msg.m4a` when launching Codex through the optional startup wrapper;
 - for the direct user-facing Codex agent only, play `complete_msg.m4a` when a turn completes normally and Codex does not appear to be the focused app;
 - for the direct user-facing Codex agent only, play `waiting_msg.m4a` when Codex needs user confirmation, approval, or another user action and Codex does not appear to be focused.
 
+Startup audio is no longer installed. The helpers remove legacy PIRA-managed startup wrappers when found.
+
 Focus detection is best-effort. On macOS the helper checks the frontmost app with `osascript`; on Windows it checks the foreground window process with built-in PowerShell/.NET calls. If the frontmost app is a known terminal or editor, including VS Code-like integrated-terminal hosts, the helper assumes the user may already be looking at Codex and stays quiet. Subagent turns are suppressed by detecting Codex session metadata, so delegated agents do not produce completion or waiting audio.
 
-The default audio set lives in `~/agent/PIRA_Voice/Samantha`. A custom audio set is any folder with these three files:
+The default audio set lives in `~/agent/PIRA_Voice/Samantha`. A custom audio set is any folder with these two files:
 
 ```text
-start_msg.m4a
 complete_msg.m4a
 waiting_msg.m4a
 ```
@@ -91,20 +96,18 @@ The setup helpers preserve existing `notify` or hook configuration when possible
 Use the repository helper scripts rather than reconstructing the setup manually. For macOS:
 
 ```bash
-bash ~/agent/assets/setup_codex_audio_mode.sh \
+bash ~/agent/assets/scripts/setup_codex_audio_mode.sh \
   --config ~/.codex/config.toml
 ```
 
 For Windows PowerShell:
 
 ```powershell
-powershell.exe -ExecutionPolicy Bypass -File "$HOME\agent\assets\setup_codex_audio_mode_windows.ps1" `
+powershell.exe -ExecutionPolicy Bypass -File "$HOME\agent\assets\scripts\setup_codex_audio_mode_windows.ps1" `
   -ConfigPath "$HOME\.codex\config.toml"
 ```
 
-After installing on macOS, run `source ~/.zshrc` or open a new terminal. Use `--no-startup-wrapper` if only completion/waiting notifications should be installed. Use `--audio-dir PATH` for a custom audio set.
-
-After installing on Windows, open a new PowerShell window. Use `-NoStartupWrapper` if only completion/waiting notifications should be installed. Use `-AudioDir PATH` for a custom audio set.
+Use `--audio-dir PATH` on macOS or `-AudioDir PATH` on Windows for a custom audio set. Restart Codex after installing or changing audio mode.
 
 If `config.toml` already has a top-level `notify` entry, inspect it first and rerun the relevant helper with `--force` on macOS or `-Force` on Windows only after confirming it is acceptable to replace.
 

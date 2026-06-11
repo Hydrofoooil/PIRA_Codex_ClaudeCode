@@ -4,21 +4,21 @@ Install optional Codex audio notifications for Windows.
 This script plays local audio files instead of using text-to-speech. It creates
 non-blocking PowerShell hooks and updates Codex config.toml so only the direct
 user-facing agent can play complete_msg.m4a and focus-aware waiting_msg.m4a;
-subagent turns stay silent. By default it also installs a PowerShell profile
-wrapper that plays start_msg.m4a when launching `codex`.
+subagent turns stay silent. Startup audio wrappers are no longer installed;
+legacy PIRA-managed startup wrappers are removed from PowerShell profiles when found.
 
 Project default audio set: $HOME\agent\PIRA_Voice\Samantha
 
 Example:
-  powershell.exe -ExecutionPolicy Bypass -File "$HOME\agent\assets\setup_codex_audio_mode_windows.ps1" `
+  powershell.exe -ExecutionPolicy Bypass -File "$HOME\agent\assets\scripts\setup_codex_audio_mode_windows.ps1" `
     -ConfigPath "$HOME\.codex\config.toml"
 
 Local custom audio example:
-  powershell.exe -ExecutionPolicy Bypass -File "$HOME\agent\assets\setup_codex_audio_mode_windows.ps1" `
+  powershell.exe -ExecutionPolicy Bypass -File "$HOME\agent\assets\scripts\setup_codex_audio_mode_windows.ps1" `
     -ConfigPath "$HOME\.codex\config.toml" `
     -AudioDir "$HOME\agent\PIRA_Voice\Debbie"
 
-Use -NoStartupWrapper to install only completion/waiting notifications.
+Legacy startup wrappers managed by older PIRA installers are removed when found.
 #>
 
 [CmdletBinding()]
@@ -28,6 +28,7 @@ param(
 
     [string]$AudioDir = "$HOME\agent\PIRA_Voice\Samantha",
 
+    # Deprecated and ignored; startup audio is no longer installed.
     [string]$StartupAudio = "",
 
     [string]$FinishedAudio = "",
@@ -36,6 +37,7 @@ param(
 
     [string]$PowerShellCmd = "powershell.exe",
 
+    # Deprecated no-op; startup audio is no longer installed.
     [switch]$NoStartupWrapper,
 
     [switch]$Force
@@ -170,65 +172,20 @@ function Get-PowerShellProfilePaths {
     ) | Select-Object -Unique
 }
 
-function Install-StartupWrapper {
-    param(
-        [Parameter(Mandatory = $true)][string]$PlayScript,
-        [Parameter(Mandatory = $true)][string]$StartupAudioPath,
-        [Parameter(Mandatory = $true)][string]$PowerShellCmd
-    )
-
-    $codexCommand = Get-Command codex.cmd -ErrorAction SilentlyContinue
-    if (-not $codexCommand) {
-        $codexCommand = Get-Command codex.exe -ErrorAction SilentlyContinue
-    }
-    if (-not $codexCommand) {
-        Write-Warning "Could not find codex.cmd or codex.exe; skipping Windows startup audio wrapper."
-        return @()
-    }
-
-    $codexPath = $codexCommand.Path
-    $audioArgLine = '-NoProfile -ExecutionPolicy Bypass -File "' + $PlayScript + '" -AudioPath "' + $StartupAudioPath + '"'
-
-    $block = @"
-$StartupStartMarker
-# Play a short startup audio notification, then delegate to the real Codex CLI.
-# Remove this block or restore the .bak file to disable startup audio.
-# Stay silent for nested `codex ...` commands launched by an existing Codex agent.
-function codex {
-    `$piraCodexCmd = $(ConvertTo-PowerShellSingleQuotedString $codexPath)
-    `$piraPlayScript = $(ConvertTo-PowerShellSingleQuotedString $PlayScript)
-    `$piraRunningUnderCodexExec = (`$env:CODEX_CI -eq "1") -or (-not [string]::IsNullOrWhiteSpace(`$env:CODEX_THREAD_ID))
-    `$piraAllowNestedAudio = @("1", "true", "TRUE", "yes", "YES") -contains `$env:PIRA_CODEX_ALLOW_NESTED_AUDIO
-    if ((-not `$piraRunningUnderCodexExec -or `$piraAllowNestedAudio) -and (Test-Path -LiteralPath `$piraPlayScript)) {
-        `$piraAudioArgs = $(ConvertTo-PowerShellSingleQuotedString $audioArgLine)
-        Start-Process -FilePath $(ConvertTo-PowerShellSingleQuotedString $PowerShellCmd) -ArgumentList `$piraAudioArgs -WindowStyle Hidden | Out-Null
-    }
-    & `$piraCodexCmd @args
-}
-$StartupEndMarker
-"@
-
+function Remove-LegacyStartupWrappers {
     $changedProfiles = @()
     foreach ($profilePath in (Get-PowerShellProfilePaths)) {
-        $profileDir = Split-Path -Parent $profilePath
-        New-Item -ItemType Directory -Force -Path $profileDir | Out-Null
+        if (-not (Test-Path -LiteralPath $profilePath)) { continue }
+        $profileText = Get-Content -LiteralPath $profilePath -Raw
+        if ($null -eq $profileText) { $profileText = "" }
+        if (-not $profileText.Contains($StartupStartMarker)) { continue }
 
-        $profileText = ""
-        if (Test-Path -LiteralPath $profilePath) {
-            $profileBackup = "$profilePath.bak.$(Get-Date -Format 'yyyyMMdd-HHmmss')"
-            Copy-Item -LiteralPath $profilePath -Destination $profileBackup
-            $profileText = Get-Content -LiteralPath $profilePath -Raw
-            if ($null -eq $profileText) { $profileText = "" }
-        }
-
+        $profileBackup = "$profilePath.bak.$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+        Copy-Item -LiteralPath $profilePath -Destination $profileBackup
         $start = [regex]::Escape($StartupStartMarker)
         $end = [regex]::Escape($StartupEndMarker)
         $pattern = "(?ms)^$start.*?^$end\r?\n?"
         $profileText = [regex]::Replace($profileText, $pattern, "")
-        if ($profileText.Length -gt 0 -and -not $profileText.EndsWith("`n")) {
-            $profileText += "`r`n"
-        }
-        $profileText = $profileText.TrimEnd() + "`r`n`r`n" + $block + "`r`n"
         Write-Utf8NoBom $profilePath $profileText
         $changedProfiles += $profilePath
     }
@@ -237,11 +194,10 @@ $StartupEndMarker
 
 $config = Resolve-UserPath $ConfigPath
 $audioDirResolved = Resolve-UserPath $AudioDir
-if ([string]::IsNullOrWhiteSpace($StartupAudio)) { $StartupAudio = Join-Path $audioDirResolved 'start_msg.m4a' } else { $StartupAudio = Resolve-UserPath $StartupAudio }
 if ([string]::IsNullOrWhiteSpace($FinishedAudio)) { $FinishedAudio = Join-Path $audioDirResolved 'complete_msg.m4a' } else { $FinishedAudio = Resolve-UserPath $FinishedAudio }
 if ([string]::IsNullOrWhiteSpace($WaitingAudio)) { $WaitingAudio = Join-Path $audioDirResolved 'waiting_msg.m4a' } else { $WaitingAudio = Resolve-UserPath $WaitingAudio }
 
-foreach ($audio in @($StartupAudio, $FinishedAudio, $WaitingAudio)) {
+foreach ($audio in @($FinishedAudio, $WaitingAudio)) {
     if (-not (Test-Path -LiteralPath $audio -PathType Leaf)) {
         Write-Error "Audio file is missing: $audio"
     }
@@ -575,28 +531,20 @@ $newText = Ensure-HooksFeature $newText
 $newText = Add-PermissionHook $newText $waitingScript $PowerShellCmd
 Write-Utf8NoBom $config $newText
 
-$changedProfiles = @()
-if (-not $NoStartupWrapper) {
-    $changedProfiles = Install-StartupWrapper -PlayScript $playScript -StartupAudioPath $StartupAudio -PowerShellCmd $PowerShellCmd
-}
+$changedProfiles = Remove-LegacyStartupWrappers
 
 Write-Output "Codex audio notification mode installed for Windows."
 Write-Output "Config: $config"
 Write-Output "Audio directory: $audioDirResolved"
-Write-Output "Startup audio: $StartupAudio"
 Write-Output "Finished audio: $FinishedAudio"
 Write-Output "Waiting audio: $WaitingAudio"
 Write-Output "Notify script: $notifyScript"
 Write-Output "Waiting hook: $waitingScript"
 Write-Output "Audio helper: $playScript"
-if ($NoStartupWrapper) {
-    Write-Output "Startup wrapper: skipped by -NoStartupWrapper"
-} elseif ($changedProfiles.Count -gt 0) {
+if ($changedProfiles.Count -gt 0) {
     foreach ($changedProfile in $changedProfiles) {
-        Write-Output "Startup wrapper profile: $changedProfile"
+        Write-Output "Removed legacy startup wrapper from profile: $changedProfile"
     }
-} else {
-    Write-Output "Startup wrapper: not installed; codex.cmd/codex.exe was not found."
 }
 if ($backup) { Write-Output "Backup: $backup" }
-Write-Output "Restart Codex to load the new notification settings. Open a new PowerShell window for startup audio."
+Write-Output "Restart Codex to load the new notification settings."

@@ -10,3 +10,7 @@ migration_TODO.md
 PIRA_Voice/Debbie/
 
 .DS_Store
+
+# Python cache files
+__pycache__/
+*.py[cod]

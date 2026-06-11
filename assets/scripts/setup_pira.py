@@ -1,0 +1,534 @@
+#!/usr/bin/env python3
+"""Deterministic setup helper for PIRA.
+
+The script intentionally uses only the Python standard library. It configures the
+current machine for the existing global PIRA layout centered on ``~/agent`` and
+keeps all writes explicit, backed up, and verifiable.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import platform
+import re
+import shutil
+import subprocess
+import sys
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+from typing import Iterable, Literal
+
+VERIFY_TOKEN = "31415926535897932384626433832795"
+DEFAULT_PROJECT_DOC_MAX_BYTES = "65536"
+USER_PLACEHOLDER_TEXT = """# USER
+
+## Knowledge Domains
+- fill manually
+
+## Technical Ability
+- fill manually
+
+## Strengths
+- fill manually
+
+## Learning Targets
+- fill manually
+
+## Working Preferences
+- fill manually
+"""
+
+
+@dataclass
+class SetupState:
+    repo_root: Path
+    agent_dir: Path
+    dry_run: bool
+    yes: bool
+    changed: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    verification: list[tuple[str, bool, str]] = field(default_factory=list)
+
+    def note_change(self, message: str) -> None:
+        self.changed.append(message)
+        print(f"CHANGE: {message}")
+
+    def warn(self, message: str) -> None:
+        self.warnings.append(message)
+        print(f"WARNING: {message}")
+
+
+def expand_path(value: str) -> Path:
+    return Path(os.path.expandvars(os.path.expanduser(value))).resolve()
+
+
+def display_path(path: Path) -> str:
+    home = Path.home().resolve()
+    try:
+        return "~/" + str(path.resolve().relative_to(home))
+    except ValueError:
+        return str(path)
+
+
+def backup_path(path: Path) -> Path:
+    stamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    return path.with_name(f"{path.name}.bak.{stamp}")
+
+
+def prompt_yes_no(question: str, default: bool = False) -> bool:
+    suffix = "[Y/n]" if default else "[y/N]"
+    answer = input(f"{question} {suffix} ").strip().lower()
+    if not answer:
+        return default
+    return answer in {"y", "yes"}
+
+
+def confirm_or_skip(state: SetupState, question: str, default: bool = False) -> bool:
+    if state.yes:
+        return True
+    if not sys.stdin.isatty():
+        state.warn(f"Skipped because confirmation is required in non-interactive mode: {question}")
+        return False
+    return prompt_yes_no(question, default=default)
+
+
+def write_text(state: SetupState, path: Path, content: str, description: str, *, backup: bool = True) -> None:
+    old = path.read_text(encoding="utf-8") if path.exists() else None
+    if old == content:
+        print(f"OK: {description} already up to date ({display_path(path)})")
+        return
+    if state.dry_run:
+        print(f"DRY-RUN: would write {description}: {display_path(path)}")
+        state.note_change(f"would update {display_path(path)}")
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if backup and path.exists():
+        backup = backup_path(path)
+        shutil.copy2(path, backup)
+        print(f"Backup: {display_path(path)} -> {display_path(backup)}")
+    path.write_text(content, encoding="utf-8")
+    state.note_change(f"updated {display_path(path)}")
+
+
+def remove_path(state: SetupState, path: Path) -> None:
+    if state.dry_run:
+        print(f"DRY-RUN: would remove legacy path {display_path(path)}")
+        state.note_change(f"would remove legacy {display_path(path)}")
+        return
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    else:
+        path.unlink()
+    state.note_change(f"removed legacy {display_path(path)}")
+
+
+def same_location(a: Path, b: Path) -> bool:
+    try:
+        return a.resolve() == b.resolve()
+    except FileNotFoundError:
+        return False
+
+
+def pira_source_root(state: SetupState) -> Path:
+    """Return where PIRA source files can be read during the current run."""
+    if (state.agent_dir / "AGENTS.md").exists():
+        return state.agent_dir
+    return state.repo_root
+
+
+def ensure_agent_dir(state: SetupState, force_agent_link: bool) -> None:
+    agent_dir = state.agent_dir
+    repo_root = state.repo_root
+    if same_location(agent_dir, repo_root):
+        print(f"OK: repository is available at {display_path(agent_dir)}")
+        return
+    if not agent_dir.exists() and not agent_dir.is_symlink():
+        if state.dry_run:
+            print(f"DRY-RUN: would create symlink {display_path(agent_dir)} -> {display_path(repo_root)}")
+            state.note_change(f"would create {display_path(agent_dir)} symlink")
+            return
+        agent_dir.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            agent_dir.symlink_to(repo_root, target_is_directory=True)
+        except OSError as exc:
+            raise RuntimeError(
+                f"Could not create symlink {agent_dir} -> {repo_root}: {exc}. "
+                "Move the repository to ~/agent or rerun with --agent-dir PATH."
+            ) from exc
+        state.note_change(f"created symlink {display_path(agent_dir)} -> {display_path(repo_root)}")
+        return
+
+    if same_location(agent_dir, repo_root):
+        print(f"OK: {display_path(agent_dir)} resolves to this repository")
+        return
+
+    if not force_agent_link:
+        raise RuntimeError(
+            f"{display_path(agent_dir)} already exists and does not point to this repository. "
+            "Move it manually, choose --agent-dir PATH, or rerun with --force-agent-link."
+        )
+
+    target = backup_path(agent_dir)
+    if state.dry_run:
+        print(f"DRY-RUN: would move existing {display_path(agent_dir)} to {display_path(target)}")
+        print(f"DRY-RUN: would create symlink {display_path(agent_dir)} -> {display_path(repo_root)}")
+        state.note_change(f"would replace conflicting {display_path(agent_dir)}")
+        return
+    agent_dir.rename(target)
+    agent_dir.symlink_to(repo_root, target_is_directory=True)
+    state.note_change(f"moved existing {display_path(agent_dir)} to {display_path(target)} and linked PIRA")
+
+
+def ensure_user_md(state: SetupState, user_mode: Literal["keep", "placeholder", "interactive"]) -> None:
+    user_path = state.agent_dir / "USER.md"
+    source_user_path = pira_source_root(state) / "USER.md"
+    if user_path.exists() or source_user_path.exists():
+        print(f"OK: USER.md exists ({display_path(source_user_path if source_user_path.exists() else user_path)})")
+        return
+    if user_mode == "keep":
+        state.warn("USER.md is missing; leaving it absent because --user-mode keep was selected")
+        return
+    if user_mode == "interactive" and not state.yes and sys.stdin.isatty():
+        print("USER.md is missing. PIRA works best with stable user preferences, but a placeholder is safe.")
+        if not prompt_yes_no("Create a private placeholder USER.md now?", default=True):
+            state.warn("USER.md placeholder was not created")
+            return
+    write_text(state, user_path, USER_PLACEHOLDER_TEXT, "private USER.md placeholder", backup=False)
+
+
+def parse_legacy_paths(source_root: Path, agent_dir: Path) -> list[Path]:
+    legacy_file = source_root / "assets" / "LEGACY_LIST.md"
+    if not legacy_file.exists():
+        return []
+    paths: list[Path] = []
+    for line in legacy_file.read_text(encoding="utf-8").splitlines():
+        match = re.match(r"\s*-\s*`([^`]+)`", line)
+        if not match:
+            continue
+        raw = match.group(1).replace("~/agent", str(agent_dir))
+        paths.append(expand_path(raw))
+    return paths
+
+
+def remove_legacy_files(state: SetupState, legacy_mode: Literal["ask", "remove", "keep"]) -> None:
+    existing = [path for path in parse_legacy_paths(pira_source_root(state), state.agent_dir) if path.exists() or path.is_symlink()]
+    if not existing:
+        print("OK: no legacy files found")
+        return
+    for path in existing:
+        print(f"Legacy path found: {display_path(path)}")
+    if legacy_mode == "keep":
+        state.warn("Legacy files remain because --legacy keep was selected")
+        return
+    if legacy_mode == "ask" and not confirm_or_skip(state, "Remove the legacy files listed above?", default=True):
+        state.warn("Legacy files remain")
+        return
+    for path in existing:
+        remove_path(state, path)
+
+
+def split_toml_preamble(text: str) -> tuple[list[str], list[str]]:
+    lines = text.splitlines(keepends=True)
+    for index, line in enumerate(lines):
+        if re.match(r"\s*\[", line):
+            return lines[:index], lines[index:]
+    return lines, []
+
+
+def top_level_keys(text: str) -> dict[str, str]:
+    preamble, _ = split_toml_preamble(text)
+    result: dict[str, str] = {}
+    for line in preamble:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        result[key.strip()] = value.strip()
+    return result
+
+
+def toml_string(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def upsert_top_level(text: str, updates: dict[str, str], remove_keys: Iterable[str] = ()) -> str:
+    remove_set = set(remove_keys)
+    preamble, rest = split_toml_preamble(text)
+    seen: set[str] = set()
+    new_preamble: list[str] = []
+    key_pattern = re.compile(r"^(\s*)([A-Za-z0-9_.-]+)(\s*=)(.*)$")
+    for line in preamble:
+        match = key_pattern.match(line)
+        if not match:
+            new_preamble.append(line)
+            continue
+        key = match.group(2)
+        if key in remove_set:
+            continue
+        if key in updates:
+            new_preamble.append(f"{key} = {updates[key]}\n")
+            seen.add(key)
+        else:
+            new_preamble.append(line)
+    additions = [f"{key} = {value}\n" for key, value in updates.items() if key not in seen]
+    if additions:
+        if new_preamble and new_preamble[-1].strip() != "":
+            new_preamble.append("\n")
+        new_preamble.extend(additions)
+    if rest and new_preamble and new_preamble[-1].strip() != "":
+        new_preamble.append("\n")
+    return "".join(new_preamble + rest)
+
+
+def configure_codex(
+    state: SetupState,
+    config_path: Path,
+    execution_mode: Literal["ask", "safe", "soft-safe", "keep"],
+    global_agents: Literal["ask", "link", "copy", "skip"],
+    replace_permissions: bool,
+) -> None:
+    if execution_mode == "ask":
+        if state.yes or not sys.stdin.isatty():
+            execution_mode = "keep"
+            state.warn("Execution mode left unchanged; pass --execution-mode safe or soft-safe to set it non-interactively")
+        else:
+            print("Execution modes:")
+            print("  1. safe: approval_policy=on-request, sandbox_mode=workspace-write")
+            print("  2. soft-safe: approval_policy=never, sandbox_mode=danger-full-access")
+            print("  3. keep: do not change approval/sandbox settings")
+            choice = input("Choose execution mode [1/2/3, default 1]: ").strip()
+            execution_mode = {"": "safe", "1": "safe", "2": "soft-safe", "3": "keep"}.get(choice, "safe")  # type: ignore[assignment]
+
+    existing = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
+    keys = top_level_keys(existing)
+    updates = {
+        "model_instructions_file": toml_string("~/agent/AGENTS.md"),
+        "project_doc_max_bytes": DEFAULT_PROJECT_DOC_MAX_BYTES,
+    }
+    remove_keys: list[str] = []
+    if execution_mode == "safe":
+        updates.update({"approval_policy": toml_string("on-request"), "sandbox_mode": toml_string("workspace-write")})
+    elif execution_mode == "soft-safe":
+        updates.update({"approval_policy": toml_string("never"), "sandbox_mode": toml_string("danger-full-access")})
+
+    if execution_mode in {"safe", "soft-safe"} and "default_permissions" in keys:
+        if not replace_permissions:
+            state.warn(
+                "Codex config has top-level default_permissions; not setting sandbox_mode because Codex docs warn not to combine them. "
+                "Rerun with --replace-permissions to remove default_permissions and set the selected mode."
+            )
+            updates.pop("sandbox_mode", None)
+        else:
+            remove_keys.append("default_permissions")
+
+    new_text = upsert_top_level(existing, updates, remove_keys=remove_keys)
+    write_text(state, config_path, new_text, "Codex config.toml")
+
+    global_agents_path = config_path.parent / "AGENTS.md"
+    pira_agents_path = state.agent_dir / "AGENTS.md"
+    if global_agents == "ask":
+        if global_agents_path.exists():
+            if same_location(global_agents_path, pira_agents_path):
+                global_agents = "link"
+            elif state.yes or not sys.stdin.isatty():
+                global_agents = "skip"
+                state.warn(f"Skipped existing global {display_path(global_agents_path)}; pass --global-agents link or copy to replace it")
+            else:
+                global_agents = "link" if prompt_yes_no(f"Replace existing {display_path(global_agents_path)} with a symlink to PIRA AGENTS.md?", default=False) else "skip"
+        else:
+            global_agents = "link"
+    if global_agents == "link":
+        ensure_global_agents_link(state, global_agents_path, pira_agents_path)
+    elif global_agents == "copy":
+        source = pira_source_root(state) / "AGENTS.md"
+        write_text(state, global_agents_path, source.read_text(encoding="utf-8"), "Codex global AGENTS.md PIRA copy")
+    else:
+        print("OK: skipped Codex global AGENTS.md link/copy")
+
+
+def ensure_global_agents_link(state: SetupState, link_path: Path, target_path: Path) -> None:
+    if same_location(link_path, target_path):
+        print(f"OK: Codex global AGENTS.md already points to {display_path(target_path)}")
+        return
+    if state.dry_run:
+        action = "replace" if link_path.exists() or link_path.is_symlink() else "create"
+        print(f"DRY-RUN: would {action} symlink {display_path(link_path)} -> {display_path(target_path)}")
+        state.note_change(f"would link {display_path(link_path)} to PIRA AGENTS.md")
+        return
+    link_path.parent.mkdir(parents=True, exist_ok=True)
+    if link_path.exists() or link_path.is_symlink():
+        backup = backup_path(link_path)
+        link_path.rename(backup)
+        print(f"Backup: {display_path(link_path)} -> {display_path(backup)}")
+    try:
+        link_path.symlink_to(target_path)
+    except OSError as exc:
+        source = pira_source_root(state) / "AGENTS.md"
+        state.warn(f"Could not create symlink ({exc}); copying AGENTS.md instead")
+        link_path.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+        state.note_change(f"copied PIRA AGENTS.md to {display_path(link_path)}")
+        return
+    state.note_change(f"linked {display_path(link_path)} -> {display_path(target_path)}")
+
+
+def configure_audio(
+    state: SetupState,
+    audio: Literal["ask", "yes", "no"],
+    config_path: Path,
+    audio_dir: Path | None,
+    force_audio: bool,
+) -> None:
+    system = platform.system().lower()
+    supported = system in {"darwin", "windows"}
+    if audio == "ask":
+        if not supported:
+            print("OK: audio notifications are supported only on macOS and Windows; skipping")
+            return
+        if state.yes or not sys.stdin.isatty():
+            print("OK: audio notifications not enabled by default")
+            return
+        audio = "yes" if prompt_yes_no("Enable optional Codex audio notifications?", default=False) else "no"
+    if audio == "no":
+        print("OK: audio notifications skipped")
+        return
+    if not supported:
+        raise RuntimeError("Audio setup is supported only on macOS and Windows")
+
+    if audio_dir is None:
+        audio_dir = state.agent_dir / "PIRA_Voice" / "Samantha"
+    for name in ["complete_msg.m4a", "waiting_msg.m4a"]:
+        candidate = audio_dir / name
+        if not candidate.exists():
+            raise RuntimeError(f"Audio file missing: {candidate}")
+
+    if system == "darwin":
+        script = state.agent_dir / "assets" / "scripts" / "setup_codex_audio_mode.sh"
+        cmd = ["bash", str(script), "--config", str(config_path), "--audio-dir", str(audio_dir)]
+        if force_audio:
+            cmd.append("--force")
+    else:
+        script = state.agent_dir / "assets" / "scripts" / "setup_codex_audio_mode_windows.ps1"
+        cmd = ["powershell.exe", "-ExecutionPolicy", "Bypass", "-File", str(script), "-ConfigPath", str(config_path), "-AudioDir", str(audio_dir)]
+        if force_audio:
+            cmd.append("-Force")
+
+    if state.dry_run:
+        print("DRY-RUN: would run audio setup command:")
+        print("  " + " ".join(sh_quote(part) for part in cmd))
+        state.note_change("would configure Codex audio notifications")
+        return
+    subprocess.run(cmd, check=True)
+    state.note_change("configured Codex audio notifications")
+
+
+def sh_quote(value: str) -> str:
+    if re.fullmatch(r"[A-Za-z0-9_./:=+-]+", value):
+        return value
+    return "'" + value.replace("'", "'\\''") + "'"
+
+
+def verify(state: SetupState, config_path: Path, skip_codex: bool) -> None:
+    def add(name: str, passed: bool, detail: str) -> None:
+        state.verification.append((name, passed, detail))
+        label = "PASS" if passed else "FAIL"
+        print(f"{label}: {name} — {detail}")
+
+    agents = state.agent_dir / "AGENTS.md"
+    add("AGENTS.md exists", agents.exists(), display_path(agents))
+    user = state.agent_dir / "USER.md"
+    add("USER.md exists", user.exists(), display_path(user))
+    soul = state.agent_dir / "SOUL.md"
+    token_ok = soul.exists() and VERIFY_TOKEN in soul.read_text(encoding="utf-8")
+    add("verification token", token_ok, VERIFY_TOKEN)
+    legacy_existing = [path for path in parse_legacy_paths(pira_source_root(state), state.agent_dir) if path.exists() or path.is_symlink()]
+    add("legacy files absent", not legacy_existing, ", ".join(display_path(p) for p in legacy_existing) or "none")
+
+    if not skip_codex:
+        if not config_path.exists():
+            add("Codex config exists", False, display_path(config_path))
+        else:
+            text = config_path.read_text(encoding="utf-8")
+            keys = top_level_keys(text)
+            add("Codex config points to PIRA", keys.get("model_instructions_file") == toml_string("~/agent/AGENTS.md"), display_path(config_path))
+            add("Codex project_doc_max_bytes", keys.get("project_doc_max_bytes") == DEFAULT_PROJECT_DOC_MAX_BYTES, keys.get("project_doc_max_bytes", "missing"))
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Set up PIRA for the current machine.")
+    parser.add_argument("--agent-dir", default="~/agent", help="Global PIRA path to configure (default: ~/agent).")
+    parser.add_argument("--codex-config", default="~/.codex/config.toml", help="Codex config.toml path.")
+    parser.add_argument("--skip-codex", action="store_true", help="Do not edit Codex configuration.")
+    parser.add_argument("--execution-mode", choices=["ask", "safe", "soft-safe", "keep"], default="ask")
+    parser.add_argument("--replace-permissions", action="store_true", help="Remove top-level default_permissions when setting sandbox_mode.")
+    parser.add_argument("--global-agents", choices=["ask", "link", "copy", "skip"], default="ask", help="How to handle ~/.codex/AGENTS.md.")
+    parser.add_argument("--user-mode", choices=["interactive", "placeholder", "keep"], default="interactive")
+    parser.add_argument("--legacy", choices=["ask", "remove", "keep"], default="ask", help="How to handle paths listed in assets/LEGACY_LIST.md.")
+    parser.add_argument("--force-agent-link", action="store_true", help="Move a conflicting --agent-dir aside and symlink this repo there.")
+    parser.add_argument("--audio", choices=["ask", "yes", "no"], default="ask", help="Whether to install optional Codex audio notifications.")
+    parser.add_argument("--audio-dir", default=None, help="Audio set directory for optional Codex audio notifications.")
+    parser.add_argument("--no-startup-wrapper", action="store_true", help="Deprecated no-op; startup audio wrappers are no longer installed.")
+    parser.add_argument("--force-audio", action="store_true", help="Allow the audio helper to replace an existing notify entry.")
+    parser.add_argument("--verify", action="store_true", help="Only verify the current setup; do not write.")
+    parser.add_argument("--dry-run", action="store_true", help="Print planned changes without writing.")
+    parser.add_argument("--yes", action="store_true", help="Assume yes for setup confirmations; does not enable audio unless --audio yes is set.")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    repo_root = Path(__file__).resolve().parents[2]
+    state = SetupState(repo_root=repo_root, agent_dir=expand_path(args.agent_dir), dry_run=args.dry_run or args.verify, yes=args.yes)
+    config_path = expand_path(args.codex_config)
+    audio_dir = expand_path(args.audio_dir) if args.audio_dir else None
+
+    print("PIRA setup")
+    print(f"Repository: {display_path(repo_root)}")
+    print(f"Agent dir:  {display_path(state.agent_dir)}")
+    print(f"Dry run:    {state.dry_run}")
+
+    try:
+        if not args.verify:
+            ensure_agent_dir(state, force_agent_link=args.force_agent_link)
+            ensure_user_md(state, args.user_mode)
+            remove_legacy_files(state, args.legacy)
+            if not args.skip_codex:
+                configure_codex(state, config_path, args.execution_mode, args.global_agents, args.replace_permissions)
+            if args.no_startup_wrapper:
+                print("OK: --no-startup-wrapper is deprecated; startup audio wrappers are no longer installed")
+            configure_audio(state, args.audio, config_path, audio_dir, args.force_audio)
+        if args.dry_run and not args.verify:
+            print("DRY-RUN: verification skipped because planned changes were not applied")
+        else:
+            verify(state, config_path, skip_codex=args.skip_codex)
+    except (RuntimeError, subprocess.CalledProcessError, OSError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+
+    print("\nSummary")
+    if state.changed:
+        for item in state.changed:
+            print(f"- {item}")
+    else:
+        print("- No changes")
+    if state.warnings:
+        print("Warnings:")
+        for item in state.warnings:
+            print(f"- {item}")
+    failed = [name for name, passed, _ in state.verification if not passed]
+    if failed:
+        print("Verification failed:")
+        for item in failed:
+            print(f"- {item}")
+        return 1
+    if state.verification:
+        print("Verification passed.")
+    else:
+        print("Verification skipped.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
