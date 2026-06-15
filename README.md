@@ -139,7 +139,7 @@ PIRA is intentionally minimal by design.
 - **Lightweight.** It keeps token overhead low instead of relying on a heavy framework or many layers of rarely used abstractions.
 - **Research-oriented.** It focuses on the workflows that matter most in research: reasoning, writing, coding, evidence gathering, and careful iteration.
 - **Practical.** It avoids complex features that are impressive in principle but often unnecessary in everyday research use.
-- **Lean by default.** Its coding style incorporates useful minimalism principles from [Ponytail](https://github.com/DietrichGebert/ponytail): prefer deletion, standard-library or platform features, and the smallest safe implementation over speculative code.
+- **Lean by default.** Its coding style incorporates useful minimalism principles from [Ponytail](https://github.com/DietrichGebert/ponytail) and general, non-language-specific lessons from Robert C. Martin's *Clean Code* and *Clean Architecture*: prefer deletion, standard-library or platform features, the smallest safe implementation, readable names, behavior-preserving refactors, and clear boundaries over speculative code or architecture ceremony.
 - **Tool-friendly.** Because the system is simple and text-based, it works naturally with official tools such as Codex.
 
 ## Safety model

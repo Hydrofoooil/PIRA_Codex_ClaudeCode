@@ -1,12 +1,12 @@
 # CODING_STYLE
 
-## Coding Loop
+## Workflow
 1. Define the change scope and smallest useful acceptance check.
-2. Apply the lean-solution ladder before adding code.
+2. Apply the lean ladder before adding code.
 3. Make the minimal safe change.
 4. Run the smallest relevant checks and report gaps.
 
-## Lean-Solution Ladder
+## Lean Ladder
 Stop at the first rung that holds:
 1. Does this need to exist? Skip speculative code and say so briefly.
 2. Does the standard library already solve it? Use it.
@@ -15,7 +15,7 @@ Stop at the first rung that holds:
 5. Can it be one clear line? Prefer that.
 6. Only then write the minimum code that works.
 
-## Scope and Design
+## Scope and Structure
 - Use this global coding style by default; switch to repository-local style only on explicit instruction.
 - Prefer correct, boring, readable solutions over clever or speculative ones.
 - Avoid unrequested abstractions, boilerplate, scaffolding "for later", and configuration for values that never change.
@@ -24,10 +24,18 @@ Stop at the first rung that holds:
 - Keep each function at one clear abstraction level; extract only when the extraction names a real idea, removes duplication, or makes a boundary explicit.
 - Avoid flag arguments when they create two different behaviors; split the behavior or use an explicit mode only when that is simpler.
 - Centralize true configuration; avoid scattered hardcoded constants.
-- Leave touched code slightly cleaner when it is already in scope, but do not expand into drive-by refactors.
 - If a complex request has a simpler sufficient version, implement it and briefly name what was skipped; ask only when defaulting would be risky.
 
-## Types and Naming
+## Boundaries and Refactoring
+- Refactor only when it reduces current change risk, removes duplication, clarifies a boundary, or makes testing materially easier.
+- Preserve behavior first; before non-trivial refactors, identify the smallest check that protects the behavior being moved.
+- Keep stable core logic independent from volatile details such as CLI parsing, file I/O, network calls, databases, UI, frameworks, and subprocess wiring when the separation is cheap.
+- Let dependencies point from volatile outer code toward stable inner logic; do not make core logic import infrastructure just for convenience.
+- Pass simple data across boundaries; avoid leaking framework, ORM, request, or process objects into core logic unless the project is intentionally just glue code.
+- Prefer incremental boundary improvements in touched code over architecture-wide rewrites.
+- Leave touched code slightly cleaner when it is already in scope, but do not expand into drive-by refactors.
+
+## Names and Types
 - Use type hints whenever proper, especially on function or method signatures.
 - Names should reveal intent, domain meaning, units, and important distinctions.
 - Avoid misleading near-synonyms; use the same word for the same concept.
@@ -41,7 +49,7 @@ Stop at the first rung that holds:
 - For non-obvious optimization, add a short comment explaining the tradeoff.
 - For large features likely to be open-sourced, survey online for high-quality implementations, then raise and confirm any promising one with the user.
 
-## Contracts and Errors
+## Contracts, Errors, and Shortcuts
 - Never simplify away input validation at trust boundaries, data-loss-preventing error handling, security controls, accessibility basics, or real-hardware calibration knobs.
 - Add runtime checks only where strict assumptions truly matter, such as shape, range, dtype, device, or trust boundary.
 - Keep checks narrow, fail-fast, and actionable; avoid silent fallbacks unless explicitly requested.
@@ -49,7 +57,7 @@ Stop at the first rung that holds:
 - For bug fixes involving failures or exceptions, include the smallest practical check for the failure path.
 - Mark intentional simplifications with a `PIRA:` comment. If the shortcut has a known ceiling, such as a global lock, $O(n^2)$ scan, or naive heuristic, name the ceiling and upgrade path.
 
-## Logs, Docs, and Comments
+## Observability and Comments
 - Default to concise structured logs for config, major stage start/end, and critical metrics.
 - Avoid verbose per-iteration logs unless debugging is explicitly needed.
 - Public APIs should have concise docstrings; internal/helper docstrings are needed only when logic is non-obvious.
@@ -61,7 +69,7 @@ Stop at the first rung that holds:
 - Add random seeding by default via a centralized `seed_everything(seed)` utility.
 - Do not enforce additional reproducibility metadata unless explicitly requested.
 
-## Testing
+## Checks and Tests
 - Non-trivial new logic should leave the smallest runnable check that would fail if it breaks; trivial one-liners do not need tests.
 - Tests should be readable, independent, fast, and focused on observable behavior rather than implementation shape.
 - If the user specifies tests, run those first.
