@@ -21,11 +21,16 @@ Stop at the first rung that holds:
 - Avoid unrequested abstractions, boilerplate, scaffolding "for later", and configuration for values that never change.
 - Prefer deletion over addition; the fewest-file, shortest working diff wins.
 - Keep data flow explicit and side effects narrow.
+- Keep each function at one clear abstraction level; extract only when the extraction names a real idea, removes duplication, or makes a boundary explicit.
+- Avoid flag arguments when they create two different behaviors; split the behavior or use an explicit mode only when that is simpler.
 - Centralize true configuration; avoid scattered hardcoded constants.
+- Leave touched code slightly cleaner when it is already in scope, but do not expand into drive-by refactors.
 - If a complex request has a simpler sufficient version, implement it and briefly name what was skipped; ask only when defaulting would be risky.
 
 ## Types and Naming
 - Use type hints whenever proper, especially on function or method signatures.
+- Names should reveal intent, domain meaning, units, and important distinctions.
+- Avoid misleading near-synonyms; use the same word for the same concept.
 - Keep names concise unless expansion removes ambiguity.
 - When proposing names, give one best choice by default.
 
@@ -40,12 +45,15 @@ Stop at the first rung that holds:
 - Never simplify away input validation at trust boundaries, data-loss-preventing error handling, security controls, accessibility basics, or real-hardware calibration knobs.
 - Add runtime checks only where strict assumptions truly matter, such as shape, range, dtype, device, or trust boundary.
 - Keep checks narrow, fail-fast, and actionable; avoid silent fallbacks unless explicitly requested.
+- Keep error paths visible without obscuring the main flow; avoid swallowing or translating errors unless it adds actionable context.
+- For bug fixes involving failures or exceptions, include the smallest practical check for the failure path.
 - Mark intentional simplifications with a `PIRA:` comment. If the shortcut has a known ceiling, such as a global lock, $O(n^2)$ scan, or naive heuristic, name the ceiling and upgrade path.
 
 ## Logs, Docs, and Comments
 - Default to concise structured logs for config, major stage start/end, and critical metrics.
 - Avoid verbose per-iteration logs unless debugging is explicitly needed.
 - Public APIs should have concise docstrings; internal/helper docstrings are needed only when logic is non-obvious.
+- Prefer clearer names or structure over explanatory comments; keep comments for intent, invariants, ceilings, and tradeoffs.
 - Comments should explain intent, assumptions, and tradeoffs, not obvious syntax.
 - For non-obvious tensor-shape handling, infer and note shapes inline; run small tests if needed to confirm important shapes.
 
@@ -55,6 +63,6 @@ Stop at the first rung that holds:
 
 ## Testing
 - Non-trivial new logic should leave the smallest runnable check that would fail if it breaks; trivial one-liners do not need tests.
+- Tests should be readable, independent, fast, and focused on observable behavior rather than implementation shape.
 - If the user specifies tests, run those first.
 - Otherwise run minimal fast checks by default, mainly syntax, grammar, static sanity, or a focused smoke test.
-- Avoid test runs expected to exceed about 30 seconds unless explicitly requested.
