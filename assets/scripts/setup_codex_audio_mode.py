@@ -701,7 +701,7 @@ def remove_legacy_startup(platform_name: Literal["macos", "windows"], zshrc: Pat
     return removed
 
 
-def configure_macos(args: argparse.Namespace, config: Path, hooks_dir: Path, finished_audio: Path, waiting_audio: Path) -> tuple[Path, Path]:
+def configure_macos(args: argparse.Namespace, hooks_dir: Path, finished_audio: Path, waiting_audio: Path) -> tuple[Path, Path]:
     player_cmd = expand_path(args.player_cmd or "/usr/bin/afplay")
     if not os.access(player_cmd, os.X_OK):
         raise RuntimeError(f"audio player command is not executable: {player_cmd}")
@@ -717,7 +717,7 @@ def configure_macos(args: argparse.Namespace, config: Path, hooks_dir: Path, fin
     return notify_script, waiting_script
 
 
-def configure_windows(args: argparse.Namespace, config: Path, hooks_dir: Path, finished_audio: Path, waiting_audio: Path) -> tuple[Path, Path, Path]:
+def configure_windows(args: argparse.Namespace, hooks_dir: Path, finished_audio: Path, waiting_audio: Path) -> tuple[Path, Path, Path]:
     powershell_cmd = args.powershell_cmd or "powershell.exe"
     play_script = hooks_dir / "pira_play_audio.ps1"
     notify_script = hooks_dir / "speak_notify.ps1"
@@ -788,12 +788,12 @@ def main(argv: list[str] | None = None) -> int:
         hooks_dir = config.parent / "hooks"
         hooks_dir.mkdir(parents=True, exist_ok=True)
         if platform_name == "macos":
-            notify_script, waiting_script = configure_macos(args, config, hooks_dir, finished_audio, waiting_audio)
+            notify_script, waiting_script = configure_macos(args, hooks_dir, finished_audio, waiting_audio)
             notify_line = f'notify = ["/bin/bash", {toml_basic_string(str(notify_script))}]'
             waiting_command = "/bin/bash " + shlex.quote(str(waiting_script))
             play_script = None
         else:
-            notify_script, waiting_script, play_script = configure_windows(args, config, hooks_dir, finished_audio, waiting_audio)
+            notify_script, waiting_script, play_script = configure_windows(args, hooks_dir, finished_audio, waiting_audio)
             notify_line = "notify = [" + toml_basic_string(args.powershell_cmd) + ', "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ' + toml_basic_string(str(notify_script)) + "]"
             waiting_command = f'{args.powershell_cmd} -NoProfile -ExecutionPolicy Bypass -File "{waiting_script}"'
 

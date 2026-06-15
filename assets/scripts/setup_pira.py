@@ -180,10 +180,6 @@ def ensure_agent_dir(state: SetupState, force_agent_link: bool) -> None:
         state.note_change(f"created symlink {display_path(agent_dir)} -> {display_path(repo_root)}")
         return
 
-    if same_location(agent_dir, repo_root):
-        print(f"OK: {display_path(agent_dir)} resolves to this repository")
-        return
-
     if not force_agent_link:
         raise RuntimeError(
             f"{display_path(agent_dir)} already exists and does not point to this repository. "

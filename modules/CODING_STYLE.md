@@ -40,7 +40,7 @@ Stop at the first rung that holds:
 - Never simplify away input validation at trust boundaries, data-loss-preventing error handling, security controls, accessibility basics, or real-hardware calibration knobs.
 - Add runtime checks only where strict assumptions truly matter, such as shape, range, dtype, device, or trust boundary.
 - Keep checks narrow, fail-fast, and actionable; avoid silent fallbacks unless explicitly requested.
-- Mark deliberate simplifications with a short comment when the ceiling is not obvious; name the limit and upgrade trigger.
+- Mark intentional simplifications with a `PIRA:` comment. If the shortcut has a known ceiling, such as a global lock, $O(n^2)$ scan, or naive heuristic, name the ceiling and upgrade path.
 
 ## Logs, Docs, and Comments
 - Default to concise structured logs for config, major stage start/end, and critical metrics.
