@@ -11,7 +11,7 @@ Load on demand (explicit or inferred):
 - `coding`: ~/agent/modules/CODING_STYLE.md for implementation/debugging/review; also load `research`.
 - `writing`: ~/agent/modules/SCIENTIFIC_WRITING.md for manuscript/LaTeX writing or polishing; also load `research`. Use this for explicit TikZ figure work, manuscript integration, and paper-facing figure styling decisions, including code-generated figures when the task is to match paper visual style, layout, or presentation conventions.
 - `learning`: ~/agent/modules/LEARNING_STYLE.md for explanatory learning support. Also load `research` when the explanation needs factual analysis, evidence-based reporting, online verification, or broader research-style synthesis.
-- `guidance`: ~/agent/modules/GUIDANCE.md for non-research practical or emotional guidance.
+- `guidance`: ~/agent/modules/GUIDANCE.md for non-research practical or emotional guidance. This only targets personal advices, not technical issues.
 - `maintenance`: ~/agent/modules/MAINTENANCE.md for maintaining PIRA agent configuration, modules, and rules, not for project-level maintenance.
 
 Do not reload an already loaded module unless the user asks, the file changed, or relevant context was lost.
