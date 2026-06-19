@@ -49,9 +49,10 @@ Stop at the first rung that holds:
 - For non-obvious optimization, add a short comment explaining the tradeoff.
 - For large features likely to be open-sourced, survey online for high-quality implementations, then raise and confirm any promising one with the user.
 
-## Contracts, Errors, and Shortcuts
-- Never simplify away input validation at trust boundaries, data-loss-preventing error handling, security controls, accessibility basics, or real-hardware calibration knobs.
-- Add runtime checks only where strict assumptions truly matter, such as shape, range, dtype, device, or trust boundary.
+## Contracts, Errors, Security, and Shortcuts
+- Never simplify away input validation at trust boundaries, data-loss-preventing error handling, security behavior, accessibility basics, or real-hardware calibration knobs.
+- Treat security as behavior, not ceremony: preserve authentication, authorization, permission/scope checks, secret handling, safe parsing/escaping, injection/XSS/CSRF/SSRF protections, resource limits, crypto/TLS defaults, and audit-relevant logs when they are in scope.
+- Add runtime checks only where strict assumptions truly matter, such as shape, range, dtype, device, trust boundary, or security boundary.
 - Keep checks narrow, fail-fast, and actionable; avoid silent fallbacks unless explicitly requested.
 - Keep error paths visible without obscuring the main flow; avoid swallowing or translating errors unless it adds actionable context.
 - For bug fixes involving failures or exceptions, include the smallest practical check for the failure path.

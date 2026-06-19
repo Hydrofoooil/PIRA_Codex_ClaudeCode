@@ -68,11 +68,18 @@ def expand_path(value: str) -> Path:
 
 
 def display_path(path: Path) -> str:
-    home = Path.home().resolve()
+    expanded = path.expanduser()
+    if not expanded.is_absolute():
+        expanded = Path.cwd() / expanded
+    home = Path.home()
     try:
-        return "~/" + str(path.resolve().relative_to(home))
+        return "~/" + str(expanded.relative_to(home))
     except ValueError:
-        return str(path)
+        pass
+    try:
+        return "~/" + str(expanded.resolve(strict=False).relative_to(home.resolve()))
+    except ValueError:
+        return str(expanded)
 
 
 def config_path_string(path: Path) -> str:
@@ -132,16 +139,38 @@ def write_text(state: SetupState, path: Path, content: str, description: str, *,
     state.note_change(f"updated {display_path(path)}")
 
 
+def path_under(path: Path, root: Path) -> bool:
+    try:
+        path.absolute().relative_to(root.absolute())
+        return True
+    except ValueError:
+        return False
+
+
+def backup_legacy_target(state: SetupState, path: Path) -> Path:
+    stamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
+    try:
+        relative = path.relative_to(state.agent_dir)
+    except ValueError:
+        relative = Path(path.name)
+    candidate = state.agent_dir / ".backup" / "setup_pira_legacy" / relative
+    candidate = candidate.with_name(f"{candidate.name}.bak.{stamp}")
+    suffix = 1
+    while candidate.exists() or candidate.is_symlink():
+        candidate = candidate.with_name(f"{candidate.name}.{suffix}")
+        suffix += 1
+    return candidate
+
+
 def remove_path(state: SetupState, path: Path) -> None:
+    target = backup_legacy_target(state, path)
     if state.dry_run:
-        print(f"DRY-RUN: would remove legacy path {display_path(path)}")
-        state.note_change(f"would remove legacy {display_path(path)}")
+        print(f"DRY-RUN: would move legacy path {display_path(path)} to backup {display_path(target)}")
+        state.note_change(f"would move legacy {display_path(path)} to backup")
         return
-    if path.is_dir() and not path.is_symlink():
-        shutil.rmtree(path)
-    else:
-        path.unlink()
-    state.note_change(f"removed legacy {display_path(path)}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(path), str(target))
+    state.note_change(f"moved legacy {display_path(path)} to backup {display_path(target)}")
 
 
 def same_location(a: Path, b: Path) -> bool:
@@ -242,6 +271,9 @@ def remove_legacy_files(state: SetupState, legacy_mode: Literal["ask", "remove",
         state.warn("Legacy files remain")
         return
     for path in existing:
+        if not path_under(path, state.agent_dir):
+            state.warn(f"Skipped legacy path outside agent directory: {display_path(path)}")
+            continue
         remove_path(state, path)
 
 

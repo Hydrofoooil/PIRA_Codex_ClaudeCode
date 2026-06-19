@@ -1,106 +1,152 @@
 # PIRA — PI Research Assistant
 
-PIRA (pronounced "Pyra") is the public-facing name of PI, a personal agent for research, writing, coding, learning, and practical problem-solving.
-It is designed to be warm, honest about uncertainty, and evidence-first when evidence matters.
+PIRA (pronounced "Pyra") is the public-facing name of PI: a plain-text, research-oriented personal agent for reasoning, writing, coding, learning, and practical problem-solving.
 
-## Get started
+PIRA is designed to be warm, honest about uncertainty, evidence-first when evidence matters, and lightweight enough to inspect and customize.
 
-PIRA's default setup is a global machine install centered on `~/agent`. The setup script is idempotent, backs up user-level Codex files before editing them, and can be run in dry-run or verification-only mode.
+## Quick start
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/AlgebraLoveme/PIRA.git ~/agent
-   cd ~/agent
-   ```
-2. Preview the planned changes:
-   ```bash
-   assets/scripts/setup_pira.sh --dry-run
-   ```
-3. Run setup:
-   ```bash
-   assets/scripts/setup_pira.sh
-   ```
-4. Verify later without writing:
-   ```bash
-   assets/scripts/setup_pira.sh --verify
-   ```
+PIRA's default install lives at `~/agent`. The setup script is idempotent, backs up user-level Codex files before editing them, supports dry-run/verify modes, and is safe to rerun on an existing install. You need Git; the setup wrapper handles Python discovery and can offer platform-specific Python install help.
 
-On Windows, use `powershell.exe -ExecutionPolicy Bypass -File assets/scripts/setup_pira.ps1` from the repository directory. On macOS/Linux, use `assets/scripts/setup_pira.sh`. The wrappers share the Python bootstrap helpers in `assets/scripts/lib/`; setup can offer to install Python with Homebrew on macOS or winget on Windows.
+### Recommended one-line install or update
 
-### Setup choices
+This command:
+- uses the existing `~/agent` git checkout when present, otherwise clones PIRA into `~/agent`;
+- enables **soft-safe** mode;
+- keeps audio notifications **off**;
+- links PIRA into Codex;
+- moves old PIRA-managed legacy files into backup;
+- creates a private `USER.md` placeholder only if `USER.md` is missing.
 
-The script asks before potentially sensitive choices in interactive mode. For unattended setup, pass explicit flags.
-
-Execution mode:
-- `--execution-mode safe` sets `approval_policy = "on-request"` and `sandbox_mode = "workspace-write"`.
-- `--execution-mode soft-safe` sets `approval_policy = "never"` and `sandbox_mode = "danger-full-access"`; this is convenient but not a sandbox.
-- `--execution-mode keep` leaves existing approval and sandbox settings unchanged.
-
-Other useful options:
-- `--yes` accepts setup confirmations, but does not enable audio unless `--audio yes` is also set.
-- `--audio yes|no|ask` controls optional Codex audio notifications.
-- `--user-mode placeholder|interactive|keep` controls `USER.md` initialization.
-- `--global-agents link|copy|skip|ask` controls whether `~/.codex/AGENTS.md` points to PIRA by symlink, copy, or not at all.
-- `--legacy remove|keep|ask` controls files listed in `assets/LEGACY_LIST.md`.
-- `--agent-dir PATH` installs against a path other than `~/agent`.
-
-Example non-interactive soft-safe setup without audio:
+macOS/Linux:
 
 ```bash
-assets/scripts/setup_pira.sh \
-  --yes \
-  --execution-mode soft-safe \
-  --audio no \
-  --global-agents link \
-  --legacy remove
+if [ -d ~/agent/.git ]; then cd ~/agent && git pull --ff-only; else git clone https://github.com/AlgebraLoveme/PIRA.git ~/agent && cd ~/agent; fi && assets/scripts/setup_pira.sh --yes --execution-mode soft-safe --audio no --user-mode placeholder --global-agents link --legacy remove
 ```
 
-### What setup configures
+Windows PowerShell:
 
-The script:
-1. Detects the repository directory and ensures it is available as `~/agent` unless another `--agent-dir` is given.
+```powershell
+if (Test-Path "$HOME/agent/.git") { Set-Location "$HOME/agent"; git pull --ff-only; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } } else { git clone https://github.com/AlgebraLoveme/PIRA.git "$HOME/agent"; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; Set-Location "$HOME/agent" }; powershell.exe -ExecutionPolicy Bypass -File assets/scripts/setup_pira.ps1 --yes --execution-mode soft-safe --audio no --user-mode placeholder --global-agents link --legacy remove
+```
+
+If you are rerunning setup and want a missing `USER.md` to stay missing, use `--user-mode keep` instead.
+
+macOS/Linux:
+
+```bash
+cd ~/agent && git pull --ff-only && assets/scripts/setup_pira.sh --yes --execution-mode soft-safe --audio no --user-mode keep --global-agents link --legacy remove
+```
+
+Windows PowerShell:
+
+```powershell
+Set-Location "$HOME/agent"; git pull --ff-only; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; powershell.exe -ExecutionPolicy Bypass -File assets/scripts/setup_pira.ps1 --yes --execution-mode soft-safe --audio no --user-mode keep --global-agents link --legacy remove
+```
+
+`git pull --ff-only` updates an existing checkout only when Git can do so without a merge. If you have tracked local edits or a divergent branch, it stops for manual review.
+
+> **Soft-safe is not a sandbox.** It sets Codex to no-approval/full-permission mode and relies on PIRA's explicit safety rules before state-changing commands.
+
+### Inspect-first install
+
+Use this path if you want to preview setup before writing anything:
+
+```bash
+git clone https://github.com/AlgebraLoveme/PIRA.git ~/agent
+cd ~/agent
+assets/scripts/setup_pira.sh --dry-run
+assets/scripts/setup_pira.sh
+assets/scripts/setup_pira.sh --verify
+```
+
+On Windows, run the same setup through `assets/scripts/setup_pira.ps1` from the repository directory:
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File assets/scripts/setup_pira.ps1
+```
+
+Both platform wrappers forward the same options to `assets/scripts/setup_pira.py`. They share the Python bootstrap helpers in `assets/scripts/lib/`; setup can offer to install Python with Homebrew on macOS or winget on Windows.
+
+## Setup options
+
+The script asks before sensitive choices in interactive mode. For unattended setup, pass explicit flags.
+
+### Execution mode
+
+| Option | Codex settings | Use when |
+| --- | --- | --- |
+| `--execution-mode safe` | `approval_policy = "on-request"`, `sandbox_mode = "workspace-write"` | You want a real approval/sandbox boundary. |
+| `--execution-mode soft-safe` | `approval_policy = "never"`, `sandbox_mode = "danger-full-access"` | You want convenience and accept full-permission risk. |
+| `--execution-mode keep` | Leaves existing approval/sandbox settings unchanged. | You already manage Codex permissions yourself. |
+
+### `USER.md` mode
+
+| Option | Behavior |
+| --- | --- |
+| `--user-mode placeholder` | Creates a private placeholder `USER.md` when it is missing. Existing `USER.md` is preserved. |
+| `--user-mode keep` | Leaves `USER.md` exactly as-is; if it is missing, setup leaves it missing. |
+| `--user-mode interactive` | Asks what to do when `USER.md` is missing. |
+
+### Other useful flags
+
+| Option | Behavior |
+| --- | --- |
+| `--yes` | Accepts setup confirmations. It does **not** enable audio unless `--audio yes` is also set. |
+| `--audio yes\|no\|ask` | Controls optional Codex audio notifications. Use `--audio no` for a quiet install. |
+| `--global-agents link\|copy\|skip\|ask` | Controls whether `~/.codex/AGENTS.md` points to PIRA by symlink, copy, or not at all. |
+| `--legacy remove\|keep\|ask` | Controls paths listed in `assets/LEGACY_LIST.md`; `remove` moves active legacy files into `.backup/setup_pira_legacy/`. |
+| `--agent-dir PATH` | Installs against a path other than `~/agent`. |
+| `--verify` | Checks the current setup without writing. |
+| `--dry-run` | Prints planned changes without applying them. |
+
+## What setup changes
+
+The setup script:
+
+1. Detects the repository directory and ensures it is available as `~/agent`, unless another `--agent-dir` is given.
 2. Initializes a private `USER.md` placeholder when needed.
-3. Removes legacy files listed in `assets/LEGACY_LIST.md` when approved.
+3. Moves legacy files listed in `assets/LEGACY_LIST.md` into `.backup/setup_pira_legacy/` when approved.
 4. Updates or creates Codex `config.toml` so the selected agent directory's `AGENTS.md` is loaded, with `project_doc_max_bytes = 65536`.
 5. Optionally links or copies `~/.codex/AGENTS.md` for Codex's global AGENTS discovery path.
-6. Optionally delegates audio setup to the existing platform-specific audio helper.
+6. Optionally delegates audio setup to the platform-specific audio helper.
 7. Verifies the setup, including the PIRA verification token.
 
-If the script cannot safely handle an existing conflicting file or Codex setting, it stops or skips that action with a warning instead of silently overwriting it.
+If setup cannot safely handle an existing conflicting file or Codex setting, it stops or skips that action with a warning instead of silently overwriting it.
 
 ## Optional Codex audio notifications
 
-This audio notification guide is only for **Codex running on macOS or Windows**. It should not be presented as supported for Claude Code, other agent tools, Linux, or other systems.
+Audio notifications are optional and are supported only for **Codex on macOS or Windows**. They are off by default and should not be presented as supported for Claude Code, other agent tools, Linux, or other systems.
 
-During installation, the setup script should ask whether to enable audio notification mode only when the detected platform is Codex on macOS or Windows. This is optional and should remain off unless the user explicitly opts in.
-
-Behavior:
-- for the direct user-facing Codex agent only, play `complete_msg.m4a` when a turn completes normally and Codex does not appear to be the focused app;
-- for the direct user-facing Codex agent only, play `waiting_msg.m4a` when Codex needs user confirmation, approval, or another user action and Codex does not appear to be focused.
+When enabled, PIRA can play:
+- `complete_msg.m4a` when the direct user-facing Codex agent finishes a turn; and
+- `waiting_msg.m4a` when the direct user-facing Codex agent needs confirmation, approval, or another user action.
 
 Startup audio is no longer installed. The helpers remove legacy PIRA-managed startup wrappers when found.
 
-Focus detection is best-effort. On macOS the helper checks the frontmost app with `osascript`; on Windows it checks the foreground window process with built-in PowerShell/.NET calls. If the frontmost app is a known terminal or editor, including VS Code-like integrated-terminal hosts, the helper assumes the user may already be looking at Codex and stays quiet. Subagent turns are suppressed by detecting Codex session metadata, so delegated agents do not produce completion or waiting audio.
+Focus detection is best-effort. On macOS, the helper checks the frontmost app with `osascript`; on Windows, it checks the foreground window process with built-in PowerShell/.NET calls. If a known terminal or editor is focused, including VS Code-like integrated-terminal hosts, the helper stays quiet. Subagent turns are suppressed by detecting Codex session metadata.
 
-The default audio set lives in `~/agent/PIRA_Voice/Samantha`. A custom audio set is any folder with these two files:
+The default audio set lives in `~/agent/PIRA_Voice/Samantha`. A custom audio set is any folder containing:
 
 ```text
 complete_msg.m4a
 waiting_msg.m4a
 ```
 
-For detailed customization, audio postprocessing steps, and ready-to-paste prompts for PIRA, see `~/agent/assets/AUDIO_CUSTOMIZATION_GUIDE.md`.
+For customization guidance, postprocessing steps, and ready-to-paste prompts for PIRA, see `~/agent/assets/AUDIO_CUSTOMIZATION_GUIDE.md`.
 
-The setup helpers preserve existing `notify` or hook configuration when possible and back up `~/.codex/config.toml` before editing it.
+### Install audio manually
 
-Use the repository helper scripts rather than reconstructing the setup manually. For macOS:
+Prefer `assets/scripts/setup_pira.* --audio yes` when installing PIRA. If you only want to configure audio, use the dedicated helpers.
+
+macOS:
 
 ```bash
 bash ~/agent/assets/scripts/setup_codex_audio_mode.sh \
   --config ~/.codex/config.toml
 ```
 
-For Windows PowerShell:
+Windows PowerShell:
 
 ```powershell
 powershell.exe -ExecutionPolicy Bypass -File "$HOME\agent\assets\scripts\setup_codex_audio_mode_windows.ps1" `
@@ -111,20 +157,22 @@ Use `--audio-dir PATH` on macOS or `-AudioDir PATH` on Windows for a custom audi
 
 If `config.toml` already has a top-level `notify` entry, inspect it first and rerun the relevant helper with `--force` on macOS or `-Force` on Windows only after confirming it is acceptable to replace.
 
-Keep `notify` at the top level of `config.toml`, before any `[section]` table, so it is not accidentally parsed as part of a nested table. After changing Codex config, restart Codex to load the new notification settings. The macOS helper uses `afplay`; the Windows helper uses Windows media playback from PowerShell.
+Keep `notify` at the top level of `config.toml`, before any `[section]` table, so it is not accidentally parsed as part of a nested table.
 
 ## What PIRA is for
 
-PIRA is meant to help with work that benefits from both care and rigor, including:
-- research planning and evidence-based analysis
-- scientific writing and paper polishing
-- coding, debugging, and repository work
-- learning and explanation
-- practical day-to-day guidance
+PIRA is meant to help with work that benefits from both care and rigor:
+
+- research planning and evidence-based analysis;
+- scientific writing and paper polishing;
+- coding, debugging, and repository work;
+- learning and explanation;
+- practical day-to-day guidance.
 
 ## Core principles
 
 PIRA is built around a few simple commitments:
+
 - **Be useful.** Prefer concrete next steps over vague advice.
 - **Be honest.** Do not fabricate claims, citations, or results.
 - **Be evidence-first.** Use primary sources when facts matter.
@@ -133,59 +181,54 @@ PIRA is built around a few simple commitments:
 
 ## Why this design
 
-PIRA is intentionally minimal by design.
+PIRA is intentionally minimal:
 
-- **Plain-text controlled.** Its behavior is defined in readable Markdown files, so it is easy to inspect, edit, and customize.
-- **Lightweight.** It keeps token overhead low instead of relying on a heavy framework or many layers of rarely used abstractions.
-- **Research-oriented.** It focuses on the workflows that matter most in research: reasoning, writing, coding, evidence gathering, and careful iteration.
-- **Practical.** It avoids complex features that are impressive in principle but often unnecessary in everyday research use.
-- **Lean by default.** Its coding style incorporates useful minimalism principles from [Ponytail](https://github.com/DietrichGebert/ponytail) and general, non-language-specific lessons from Robert C. Martin's *Clean Code* and *Clean Architecture*: prefer deletion, standard-library or platform features, the smallest safe implementation, readable names, behavior-preserving refactors, and clear boundaries over speculative code or architecture ceremony.
+- **Plain-text controlled.** Behavior is defined in readable Markdown files, so it is easy to inspect, edit, and customize.
+- **Lightweight.** Token overhead stays low; there is no heavy framework or rarely used abstraction layer.
+- **Research-oriented.** The default workflows emphasize reasoning, writing, coding, evidence gathering, and careful iteration.
+- **Lean by default.** The coding style incorporates useful minimalism principles from [Ponytail](https://github.com/DietrichGebert/ponytail) and general, non-language-specific lessons from Robert C. Martin's *Clean Code* and *Clean Architecture*: prefer deletion, standard-library or platform features, the smallest safe implementation, readable names, behavior-preserving refactors, and clear boundaries over speculative code or architecture ceremony.
 - **Tool-friendly.** Because the system is simple and text-based, it works naturally with official tools such as Codex.
 
 ## Safety model
 
-PIRA can be used in a soft-safe full-permission mode, but it is not a sandbox. Its safety depends on explicit operating rules in `TOOLS.md`, including:
+PIRA can run in soft-safe full-permission mode, but it is not a sandbox. Its safety depends on explicit operating rules in `TOOLS.md`, including:
 
 - before any command that may write or change state, print a brief safety review covering action, scope, destructive risk, secrets/privacy impact, and rollback path when available;
 - prefer narrow, reversible actions;
 - avoid destructive commands without explicit permission;
 - keep temporary artifacts in the platform temp directory unless the user wants them preserved.
 
-Subagents should load the same bootstrap policy as the main agent (automatically handled by Codex but not tested on other agents).
+Subagents should load the same bootstrap policy as the main agent. This is handled by Codex but has not been tested on other agents.
 
 ## Tested compatibility
 
 PIRA has been tested extensively with **Codex using GPT-5.4/5.5 on high reasoning effort**.
 
-## What is in this repository
+## Repository layout
 
-- `AGENTS.md` — the bootstrap instructions and module routing policy
+- `AGENTS.md` — bootstrap instructions and module routing policy
 - `SOUL.md` — PI's identity, tone, and non-negotiable behaviors
 - `TOOLS.md` — tool-use and safety rules
-- `USER.md` — user-specific knowledge and working preferences
-- `modules/` — optional task-specific modules such as research, coding, writing, learning, guidance, and maintenance
+- `USER.md` — user-specific knowledge and working preferences; keep this private
+- `modules/` — optional task-specific modules for research, coding, writing, learning, guidance, and maintenance
+- `assets/scripts/` — setup and helper scripts
 - `PIRA_Voice/Samantha/` — default audio clips for optional Codex notifications
-
-## How to use it
-
-This repository is intended to live at `~/agent` and be loaded automatically at the start of each session by your coding or agent tool.
-
-The setup philosophy is intentionally simple: keep the system text-first, keep personal context local, and rely on small task-specific modules instead of a heavy framework.
 
 ## Public/private split
 
-The public repository contains the shared policy framework.
-Personal context should stay local:
-- `USER.md` should remain private
-- each workspace can keep a local `AGENT_WORKBOOK.md`
+The public repository contains the shared policy framework. Personal context should stay local:
+
+- keep `USER.md` private;
+- keep workspace-specific memory in local `AGENT_WORKBOOK.md` files;
+- do not commit secrets or sensitive personal information.
 
 ## Why the name PIRA
 
-PIRA stands for PI Research Assistant. It keeps the identity of PI while giving the project a clearer and more public-facing name.
+PIRA stands for PI Research Assistant. It preserves the identity of PI while giving the project a clearer public-facing name.
 
 ## Acknowledgement and citation
 
-If PIRA materially assists a research project, please disclose that assistance where appropriate, such as in an acknowledgement, LLM-use disclosure, or reproducibility checklist, and cite this repository. Adapt the scope of assistance to what was actually used, and include the actual model/version or reasoning setting if your venue asks for that level of detail.
+If PIRA materially assists a research project, disclose that assistance where appropriate, such as in an acknowledgement, LLM-use disclosure, or reproducibility checklist, and cite this repository. Adapt the scope of assistance to what was actually used, and include the actual model/version or reasoning setting if your venue asks for that level of detail.
 
 Suggested disclosure text:
 
