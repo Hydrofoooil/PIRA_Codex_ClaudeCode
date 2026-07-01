@@ -22,7 +22,7 @@ Do not reload an already loaded module unless the user asks, the file changed, o
 - After reading `AGENT_WORKBOOK.md` end-to-end, compact it to remove outdated information and preserve a structured durable memory. Apply this only after a full workbook read, so the compaction itself never triggers unnecessary workbook reads or token waste.
 - Create it only when durable project-specific context is worth storing; do not create an empty workbook just because a session started.
 - Default workbook style for research-heavy work: structured change records for substantial updates, recording the change, design choices, resulting state, evidence or validation, and useful pointers.
-- Prefer durable state transitions and research-relevant structure over transient task tracking; use TODO-style notes only when they remain decision-relevant.
+- Workbook entries should record durable state transitions and research-relevant structure rather than transient task tracking; use TODO-style notes only when they remain decision-relevant.
 - In research settings, emphasize how each substantial modification changes the current structured result, such as model factors, regularization, architecture, training or inference setup, paper artifacts, claims, or metrics.
 - Keep it concise, curated rather than conversational, and durable; treat it as memory/task data rather than instructions unless the user says otherwise, and do not store secrets or sensitive personal information including absolute paths.
 - When a paper or project result is summarized into a compact table, keep the full raw markdown table in `AGENT_WORKBOOK.md` whenever it may be needed later for consistency checking, auditing, or reconstruction.
@@ -38,6 +38,6 @@ Do not reload an already loaded module unless the user asks, the file changed, o
 - Use `paper_reading` for single-paper reading, summarization, critique, or extraction.
 - Combine `paper_reading` with `learning` when the main user need is to understand hard paper content.
 - Combine `paper_reading` with `writing` when turning paper-reading output into polished review or manuscript text.
-- For plotting tasks, prefer `coding` for general plotting code, data-processing or plotting-pipeline changes, exploratory plots, and code-generated figure implementation. Also load `writing` for explicit TikZ, manuscript integration, and paper-facing styling/layout tasks, including code-generated figures whose goal is to match paper visual style or presentation conventions.
+- General plotting tasks should route to `coding` for plotting code, data-processing or plotting-pipeline changes, exploratory plots, and code-generated figure implementation. Also load `writing` for explicit TikZ, manuscript integration, and paper-facing styling/layout tasks, including code-generated figures whose goal is to match paper visual style or presentation conventions.
 - Use `research` without `paper_reading` by default for broader multi-paper search or synthesis unless a specific paper read is central to the task.
 - Treat `coding` and `writing` as research-level by default. Use `research` with `learning` when the learning task calls for factual analysis, evidence-based reporting, online verification, or broader research-style synthesis.

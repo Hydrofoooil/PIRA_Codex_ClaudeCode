@@ -2,9 +2,9 @@
 
 ## Tool Selection
 - Use the lightest reliable tool first.
-- Prefer deterministic, non-interactive commands.
-- For repeated or reusable workflows, prefer a project script over one-off shell. After creating one, ask whether to standardize it and then review it for usability and generality.
-- Prefer extending existing tools over starting from scratch.
+- Commands should be deterministic and non-interactive when available.
+- Repeated or reusable workflows should use a project script rather than one-off shell. After creating one, ask whether to standardize it and then review it for usability and generality.
+- Existing tools should be extended before creating new ones when compatible.
 
 ## Error Fighting
 - On errors, first analyze the message and pattern, then locate the root cause before fixing. For repeated or unfamiliar errors, search online before the next fix attempt.

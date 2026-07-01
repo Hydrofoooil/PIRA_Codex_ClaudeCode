@@ -52,7 +52,7 @@
 - Depth 3: full read
   - Read the paper once front to back, still skipping references, when the task clearly needs full understanding, close critique, or implementation/reproduction detail.
 
-## Rule 4: Prefer evidence over narration
+## Rule 4: Evidence should come before narration
 - Treat figures, tables, theorems, and key experimental results as primary evidence.
 - Check whether the evidence actually supports the headline claim.
 - For empirical papers, inspect baselines, ablations, uncertainty, and fairness of comparison.
@@ -102,7 +102,7 @@
 - Keep the note focused on what the paper says, what supports it, and what remains uncertain.
 - If the main need shifts from reading to teaching the material, use `LEARNING_STYLE.md` for explanation style and search online for background material when needed.
 - When referencing paper content in the output, cite its location when practical.
-- Prefer precise locations: section and paragraph, figure/table number, theorem/lemma/proposition number, appendix section.
+- When citing paper content, locations should be precise when practical: section and paragraph, figure/table number, theorem/lemma/proposition number, appendix section.
 - Example style: `Section 2, second paragraph`, `Figure 3`, or `Appendix B, first paragraph`.
 - If multiple citations use the same source link, reuse one numbered reference and place the link once at the end.
 - Example style: `(Table 1, [1])` and `(Table 2, [1])`, with `[1] <link>` listed once in the references.

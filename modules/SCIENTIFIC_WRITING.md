@@ -14,14 +14,14 @@
 - Keep terminology, notation, symbols, equations, definitions, headings, and citation style internally consistent; fix them only for consistency, clarity, or correctness.
 - In LaTeX prose, use `\cref` consistently for cross-references; use `\citet` for textual citations and `\citep` for parenthetical citations; avoid generic `\cite` unless the document style explicitly requires it.
 - Expand acronyms on first use in each section when needed, then use them consistently.
-- Prefer concise, reader-friendly prose: shorter sentences when helpful, natural logical connectors, and examples only when they materially improve clarity.
-- In academic prose, avoid semicolons unless they are clearly necessary; prefer sentence splits or light wording changes. Keep semicolons when they are part of math, code, or notation syntax.
+- Prose should be concise and reader-friendly: shorter sentences when helpful, natural logical connectors, and examples only when they materially improve clarity.
+- In academic prose, semicolons should be avoided unless they are clearly necessary; sentence splits or light wording changes should be used instead. Keep semicolons when they are part of math, code, or notation syntax.
 - Flag logic, evidence, or exposition gaps and propose minimal fixes.
 - Do not leave ambiguous notation, undefined symbols, unexplained task-specific terminology, or obvious audience-mismatch problems in the final text.
 
 ## Drafting Rules
 - Build a clear section flow that matches the paper function, for example `motivation -> method -> evidence -> takeaway` when appropriate.
-- Prefer present tense, active voice, and `we` when clear, unless the target venue or user draft clearly prefers another style.
+- Drafting should use present tense, active voice, and `we` when clear, unless the target venue or user draft clearly requires another style.
 - Do not introduce unsupported claims, evidence, or citations.
 - Do not add future-work statements unless the user asks for them or the draft already contains them.
 - Ensure the drafted section has a clear reader-oriented purpose, coherent flow, and enough context for the intended audience.
@@ -32,7 +32,7 @@
 - Allow moderate sentence-level restructuring, but keep paragraph order, relative emphasis, and overall section flow unless coherence clearly improves.
 - If an edit may shift meaning, provide two alternatives, safer and improved, and recommend one.
 - Do not let a cleaner rewrite introduce meaning drift, remove decision-relevant nuance, or weaken the author's intended emphasis.
-- For rebuttals and response letters, optimize for directness, factual grounding, and reviewer usability: answer the concern first, keep a clear mapping from concern to response, distinguish clarifications and paper changes from remaining limitations, prefer concrete commitments over vague reassurance, and keep the tone respectful and non-defensive without overstating novelty, evidence strength, or implementation status.
+- For rebuttals and response letters, optimize for directness, factual grounding, and reviewer usability: answer the concern first, keep a clear mapping from concern to response, distinguish clarifications and paper changes from remaining limitations, concrete commitments should be used over vague reassurance, and keep the tone respectful and non-defensive without overstating novelty, evidence strength, or implementation status.
 
 ## Default Output
 1. Requested writing deliverable.
@@ -57,7 +57,7 @@
 - For visual or layout-sensitive figure tasks, rendered appearance is the primary acceptance criterion; always visually inspect the rendered preview rather than relying only on compilation pass or code inspection.
 - Inspect for overlap, clipping, crowding, weak contrast, ambiguous labeling, inconsistent styling, spacing imbalance, and alignment issues.
 - Use color semantically: one color should encode one condition or model consistently across the figure.
-- Prefer clear, reusable palette choices; avoid weak low-contrast colors for important curves.
+- Palette choices should be clear and reusable; avoid weak low-contrast colors for important curves.
 - When important contents overlap due to numerical similarity, use alpha and other lightweight styling adjustments to improve separability without making the figure noisy.
 - Keep legends, annotations, ticks, and tick labels concise, visually attributable, and clean.
 - Compile policy: fast draft compile each pass, single-pass by default, full compile on the final pass, and multi-pass only when refs or layout require it.
@@ -73,7 +73,7 @@
 ### Working Rules
 - Use TikZ mainly for conceptual scientific figures; default output is the full figure block (`figure` + `caption` + `label`).
 - Keep layouts clean; avoid negative `\vspace` and aggressive squeezing unless explicitly requested.
-- Reuse existing template or header commands and styles first; search only the current repository for reusable commands or styles, and prefer semantic style aliases over raw inline styling unless necessary.
+- Reuse existing template or header commands and styles first; search only the current repository for reusable commands or styles, and semantic style aliases should be used rather than raw inline styling unless necessary.
 - For TikZ figures, use named macros, coordinates, or semantic nodes for major repeated or structural geometry; avoid scattering hardcoded layout numbers across the figure unless abstraction would not help.
 - If styles or macros are missing, propose at most two options, minimal and richer, confirm with the user, and edit headers only after approval.
 - Use clear semantic names for new commands or styles; do not force personal prefixes.

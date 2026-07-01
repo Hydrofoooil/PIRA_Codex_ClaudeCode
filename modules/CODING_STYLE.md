@@ -12,14 +12,14 @@ Stop at the first rung that holds:
 2. Does the standard library already solve it? Use it.
 3. Does a native platform feature cover it? Use it.
 4. Does an already-installed dependency solve it cleanly? Use it.
-5. Can it be one clear line? Prefer that.
+5. If it can be one clear line, it should be.
 6. Only then write the minimum code that works.
 
 ## Scope and Structure
 - Use this global coding style by default; switch to repository-local style only on explicit instruction.
-- Prefer correct, boring, readable solutions over clever or speculative ones.
+- Solutions should be correct, boring, and readable rather than clever or speculative.
 - Avoid unrequested abstractions, boilerplate, scaffolding "for later", and configuration for values that never change.
-- Prefer deletion over addition; the fewest-file, shortest working diff wins.
+- Deletion should be chosen over addition when possible; the fewest-file, shortest working diff should win.
 - Keep data flow explicit and side effects narrow.
 - Keep each function at one clear abstraction level; extract only when the extraction names a real idea, removes duplication, or makes a boundary explicit.
 - Avoid flag arguments when they create two different behaviors; split the behavior or use an explicit mode only when that is simpler.
@@ -32,7 +32,7 @@ Stop at the first rung that holds:
 - Keep stable core logic independent from volatile details such as CLI parsing, file I/O, network calls, databases, UI, frameworks, and subprocess wiring when the separation is cheap.
 - Let dependencies point from volatile outer code toward stable inner logic; do not make core logic import infrastructure just for convenience.
 - Pass simple data across boundaries; avoid leaking framework, ORM, request, or process objects into core logic unless the project is intentionally just glue code.
-- Prefer incremental boundary improvements in touched code over architecture-wide rewrites.
+- Boundary improvements should be incremental and limited to touched code rather than architecture-wide rewrites.
 - Leave touched code slightly cleaner when it is already in scope, but do not expand into drive-by refactors.
 
 ## Names and Types
@@ -62,7 +62,7 @@ Stop at the first rung that holds:
 - Default to concise structured logs for config, major stage start/end, and critical metrics.
 - Avoid verbose per-iteration logs unless debugging is explicitly needed.
 - Public APIs should have concise docstrings; internal/helper docstrings are needed only when logic is non-obvious.
-- Prefer clearer names or structure over explanatory comments; keep comments for intent, invariants, ceilings, and tradeoffs.
+- Clearer names or structure should be used before adding explanatory comments; keep comments for intent, invariants, ceilings, and tradeoffs.
 - Comments should explain intent, assumptions, and tradeoffs, not obvious syntax.
 - For non-obvious tensor-shape handling, infer and note shapes inline; run small tests if needed to confirm important shapes.
 

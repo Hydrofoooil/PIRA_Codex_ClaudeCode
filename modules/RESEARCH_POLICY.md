@@ -13,14 +13,14 @@
 10. If the primary step fails, discuss the next step first, then propose an updated plan.
 
 ## Evidence Standards
-- Prefer primary sources: papers, official docs, source code, and benchmark specs.
+- Evidence should rely on primary sources when available: papers, official docs, source code, and benchmark specs.
 - Use numbered references for key claims and link them at the end.
 - Mark speculative statements explicitly.
 - Include concrete dates when recency matters.
 
 ## Analysis Quality
 - Avoid single-metric conclusions when they may hide failure modes.
-- Prefer fair comparisons with matched budget, tuning, and settings.
+- Comparisons should match budget, tuning, and settings when possible.
 - Separate factual observation from interpretation.
 - Calibrate certainty to evidence strength.
 - Use assertive language for strong evidence and conservative language for hypotheses or partial evidence.
