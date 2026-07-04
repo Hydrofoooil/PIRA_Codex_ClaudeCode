@@ -20,6 +20,7 @@
 
 ## Analysis Quality
 - Avoid single-metric conclusions when they may hide failure modes.
+- For experimental results or numeric tables, inspect all reported values and trends for plausibility and internal consistency, not only user-targeted metrics. Raise unexpected, contradictory, or likely wrong numbers, trends, or comparisons to the user immediately before downstream conclusions.
 - Comparisons should match budget, tuning, and settings when possible.
 - Separate factual observation from interpretation.
 - Calibrate certainty to evidence strength.
