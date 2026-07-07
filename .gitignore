@@ -31,3 +31,5 @@ tools/pira_ctx_plan.md
 tools/tests/
 *.piractx
 /pira_ctx/
+
+tools/build/
