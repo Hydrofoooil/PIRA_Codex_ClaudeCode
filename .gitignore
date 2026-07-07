@@ -15,7 +15,6 @@ PIRA_Voice/Debbie/
 __pycache__/
 *.py[cod]
 
-
 # Private local tool planning
 tool_todo.md
 
@@ -24,9 +23,6 @@ tool_todo.md
 # - tools/bin/pira_ctx/<platform>/pira_ctx[.exe]
 # Ignore local build caches, source/build inputs, captured outputs, and dev-only tests/plans.
 tools/target/
-tools/Cargo.toml
-tools/Cargo.lock
-tools/src/
 tools/pira_ctx_plan.md
 tools/tests/
 *.piractx

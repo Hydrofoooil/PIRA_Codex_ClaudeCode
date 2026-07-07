@@ -1,0 +1,11 @@
+[package]
+name = "pira_ctx"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+regex = "1"
+
+[[bin]]
+name = "pira_ctx"
+path = "src/bin/pira_ctx.rs"
