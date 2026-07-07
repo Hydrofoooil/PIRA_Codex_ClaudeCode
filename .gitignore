@@ -20,13 +20,14 @@ __pycache__/
 tool_todo.md
 
 # pira_ctx install/runtime files to keep visible:
-# - tools/Cargo.toml
-# - tools/Cargo.lock
-# - tools/src/bin/pira_ctx.rs
-# - tools/bin/pira_ctx
-# Ignore local build caches and development-only artifacts.
+# - tools/bin/pira_ctx/select_tool_for_platform.py
+# - tools/bin/pira_ctx/<platform>/pira_ctx[.exe]
+# Ignore local build caches, source/build inputs, captured outputs, and dev-only tests/plans.
 tools/target/
+tools/Cargo.toml
+tools/Cargo.lock
+tools/src/
 tools/pira_ctx_plan.md
 tools/tests/
 *.piractx
-pira_ctx/
+/pira_ctx/
