@@ -14,3 +14,19 @@ PIRA_Voice/Debbie/
 # Python cache files
 __pycache__/
 *.py[cod]
+
+
+# Private local tool planning
+tool_todo.md
+
+# pira_ctx install/runtime files to keep visible:
+# - tools/Cargo.toml
+# - tools/Cargo.lock
+# - tools/src/bin/pira_ctx.rs
+# - tools/bin/pira_ctx
+# Ignore local build caches and development-only artifacts.
+tools/target/
+tools/pira_ctx_plan.md
+tools/tests/
+*.piractx
+pira_ctx/
