@@ -21,7 +21,7 @@ tool_todo.md
 # pira_ctx install/runtime files to keep visible:
 # - tools/bin/pira_ctx/select_tool_for_platform.py
 # - tools/bin/pira_ctx/<platform>/pira_ctx[.exe]
-# Ignore local build caches, source/build inputs, captured outputs, and dev-only tests/plans.
+# Public source and release binaries stay visible; ignore local caches, captures, and dev-only tests/plans.
 tools/target/
 tools/pira_ctx_plan.md
 tools/tests/
