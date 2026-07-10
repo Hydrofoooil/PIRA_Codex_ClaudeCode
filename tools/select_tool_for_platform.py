@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Select and verify the bundled ``pira_ctx`` executable for this machine.
+"""Select, verify, and optionally install ``pira_ctx`` for this machine.
 
 Selection is local and deterministic. The script does not invoke an agent or a
-shell, install dependencies, or build code. Setup code should normally consume
-the default absolute path output and copy that binary into the installation.
+shell, install dependencies, or build code. PIRA setup should call ``--install``
+once; runtime callers should then execute the canonical installed path directly.
 """
 from __future__ import annotations
 
@@ -12,12 +12,16 @@ import hashlib
 import json
 import os
 import platform
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
-BUNDLE_DIR = Path(__file__).resolve().parent
+TOOLS_DIR = Path(__file__).resolve().parent
+BUNDLE_DIR = TOOLS_DIR / "dist" / "pira_ctx"
 MANIFEST_PATH = BUNDLE_DIR / "bundle.json"
+DEFAULT_RUNTIME_DIR = TOOLS_DIR / "bin" / "pira_ctx"
 
 OS_ALIASES = {
     "darwin": "darwin",
@@ -118,11 +122,77 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def install_binary(
+    binary: Path,
+    record: dict[str, Any],
+    install_dir: Path = DEFAULT_RUNTIME_DIR,
+) -> Path:
+    """Atomically copy a verified binary to the canonical runtime directory."""
+    if install_dir.is_symlink():
+        raise SelectionError(f"refusing symlinked pira_ctx runtime directory: {install_dir}")
+    try:
+        install_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        raise SelectionError(f"cannot create pira_ctx runtime directory {install_dir}: {error}") from error
+    if not install_dir.is_dir():
+        raise SelectionError(f"pira_ctx runtime path is not a directory: {install_dir}")
+
+    executable_name = "pira_ctx.exe" if binary.suffix.lower() == ".exe" else "pira_ctx"
+    destination = install_dir / executable_name
+    temporary: Path | None = None
+    try:
+        with binary.open("rb") as source, tempfile.NamedTemporaryFile(
+            mode="wb",
+            prefix=f".{executable_name}.tmp-",
+            dir=install_dir,
+            delete=False,
+        ) as output:
+            temporary = Path(output.name)
+            shutil.copyfileobj(source, output, length=1024 * 1024)
+            output.flush()
+            os.fsync(output.fileno())
+        if os.name != "nt":
+            temporary.chmod(0o755)
+        expected = record.get("sha256")
+        actual = sha256_file(temporary)
+        if actual != expected:
+            raise SelectionError(
+                f"installed pira_ctx checksum mismatch: expected {expected}, got {actual}"
+            )
+        os.replace(temporary, destination)
+        temporary = None
+    except OSError as error:
+        raise SelectionError(f"cannot install pira_ctx at {destination}: {error}") from error
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+    alternate = install_dir / ("pira_ctx" if executable_name.endswith(".exe") else "pira_ctx.exe")
+    if alternate.is_symlink() or alternate.is_file():
+        alternate.unlink()
+    elif alternate.exists():
+        raise SelectionError(f"unexpected directory at alternate runtime path: {alternate}")
+    return destination.resolve()
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Select the bundled pira_ctx binary for this platform.")
+    parser = argparse.ArgumentParser(
+        description="Select or install the bundled pira_ctx binary for this platform."
+    )
     output = parser.add_mutually_exclusive_group()
     output.add_argument("--platform", "--print-platform", action="store_true", help="print only the normalized platform key")
     output.add_argument("--json", action="store_true", help="print selection details as JSON")
+    parser.add_argument(
+        "--install",
+        action="store_true",
+        help="copy the selected binary to the canonical runtime directory",
+    )
+    parser.add_argument(
+        "--install-dir",
+        type=Path,
+        default=DEFAULT_RUNTIME_DIR,
+        help="runtime directory used with --install",
+    )
     parser.add_argument("--no-verify", action="store_true", help="skip SHA-256 verification")
     return parser.parse_args(argv)
 
@@ -131,10 +201,24 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     key = current_platform()
     binary, record = select_binary(key, verify=not args.no_verify)
+    source_binary = binary
+    if args.install:
+        binary = install_binary(binary, record, args.install_dir)
     if args.platform:
         print(key)
     elif args.json:
-        print(json.dumps({**record, "platform": key, "path": str(binary)}, sort_keys=True))
+        print(
+            json.dumps(
+                {
+                    **record,
+                    "installed": args.install,
+                    "platform": key,
+                    "source_path": str(source_binary),
+                    "path": str(binary),
+                },
+                sort_keys=True,
+            )
+        )
     else:
         print(binary)
     return 0
