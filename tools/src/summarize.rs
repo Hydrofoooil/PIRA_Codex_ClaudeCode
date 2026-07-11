@@ -1,5 +1,6 @@
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
+use std::sync::OnceLock;
 
 use crate::model::{CaptureResult, LineMeta, StreamKind};
 use crate::util;
@@ -236,28 +237,43 @@ pub fn detected_paths(capture: &CaptureResult) -> Result<Vec<String>, String> {
 
 pub fn suggested_keywords(
     capture: &CaptureResult,
+    command: &[String],
     _user_keywords: &[String],
 ) -> Result<Vec<String>, String> {
     let mut seen = HashSet::new();
     let mut output = Vec::new();
+    let diff_context = is_diff_context(command);
     let mut lines: Vec<&LineMeta> = capture.timeline.iter().collect();
     lines.retain(|line| {
-        line.reasons.iter().any(|reason| {
-            matches!(
-                reason.as_str(),
-                "outcome/failure"
-                    | "severity/error"
-                    | "failed test"
-                    | "warning"
-                    | "numeric anomaly"
-            )
-        })
+        (diff_context && line.reasons.iter().any(|reason| reason == "structure/diff"))
+            || (capture.exit_code != 0
+                && line.reasons.iter().any(|reason| {
+                    matches!(
+                        reason.as_str(),
+                        "outcome/failure"
+                            | "severity/error"
+                            | "failed test"
+                            | "warning"
+                            | "numeric anomaly"
+                    )
+                }))
     });
     lines.sort_by_key(|line| Reverse(line.score));
     let mut readers = capture.readers()?;
-    for line in lines.into_iter().take(12) {
+    for line in lines.into_iter().take(24) {
         let clean = readers.read_display_line(line)?;
-        for candidate in structured_search_terms(&clean) {
+        if is_serialized_payload_line(&clean) {
+            continue;
+        }
+        let is_diff = line.reasons.iter().any(|reason| reason == "structure/diff");
+        let candidates = if is_diff && diff_context {
+            diff_search_term(&clean).into_iter().collect()
+        } else if capture.exit_code != 0 && is_diagnostic_evidence(&clean) {
+            structured_search_terms(&clean)
+        } else {
+            Vec::new()
+        };
+        for candidate in candidates {
             let lower = candidate.to_lowercase();
             if seen.insert(lower) {
                 output.push(candidate);
@@ -285,7 +301,19 @@ fn structured_search_terms(clean: &str) -> Vec<String> {
     if lower.starts_with("failed ")
         && let Some(identifier) = trimmed.split_whitespace().nth(1)
     {
-        output.push(identifier.trim_end_matches(':').to_string());
+        if trimmed.contains(" - ") {
+            output.push(identifier.trim_end_matches(':').to_string());
+        } else {
+            let phrase = trimmed
+                .split(':')
+                .next()
+                .unwrap_or(trimmed)
+                .split(['\'', '"'])
+                .next()
+                .unwrap_or(trimmed)
+                .trim();
+            output.push(util::single_line_clip(phrase, 80));
+        }
     }
     if lower.starts_with("diff in ") {
         let location = trimmed[8..].trim_end_matches(':');
@@ -300,24 +328,214 @@ fn structured_search_terms(clean: &str) -> Vec<String> {
     if lower.starts_with("error: could not compile") {
         output.push("could not compile".into());
     }
-    let code = regex::Regex::new(r"\b(?:E\d{4}|TS\d+|ERR_[A-Z0-9_]+)\b").unwrap();
-    let lint = regex::Regex::new(r"\bclippy::[a-z0-9_]+\b").unwrap();
-    let exception = regex::Regex::new(r"\b[A-Za-z][A-Za-z0-9]*(?:Error|Exception)\b").unwrap();
-    let path = regex::Regex::new(
-        r"\b(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+\.(?:rs|py|js|jsx|ts|tsx|c|cc|cpp|h|hpp|go|java)(?::\d+(?::\d+)?)?\b",
-    )
-    .unwrap();
-    let matchers = if lower.starts_with("diff in ") {
-        vec![&code, &lint, &exception]
-    } else {
-        vec![&code, &lint, &exception, &path]
-    };
-    for re in matchers {
-        for found in re.find_iter(trimmed) {
+    if lower.contains("command not found") {
+        output.push("command not found".into());
+    }
+    if lower.contains("permission denied") {
+        output.push("permission denied".into());
+    }
+    if lower.starts_with("panic:") {
+        output.push(util::single_line_clip(trimmed, 80));
+    }
+    for found in diagnostic_code_re().find_iter(trimmed) {
+        output.push(found.as_str().to_string());
+    }
+    for found in lint_re().find_iter(trimmed) {
+        output.push(found.as_str().to_string());
+    }
+    for found in exception_re().find_iter(trimmed) {
+        if has_exception_punctuation(trimmed, found.start(), found.end()) {
             output.push(found.as_str().to_string());
         }
     }
+    for found in path_re().find_iter(trimmed) {
+        if !is_dependency_path(found.as_str()) {
+            output.push(stable_path_term(found.as_str()));
+        }
+    }
+    for found in paren_location_re().find_iter(trimmed) {
+        if !is_dependency_path(found.as_str()) {
+            output.push(stable_path_term(found.as_str()));
+        }
+    }
     output
+}
+
+fn diagnostic_code_re() -> &'static regex::Regex {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        regex::Regex::new(r"\b(?:E\d{4}|TS\d+|CS\d+|ERR_[A-Z0-9_]+|[A-Z][A-Z0-9_]{1,15}\d{3,6})\b")
+            .unwrap()
+    })
+}
+
+fn lint_re() -> &'static regex::Regex {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(r"\b[a-z][a-z0-9_-]*::[a-z][a-z0-9_-]+\b").unwrap())
+}
+
+fn exception_re() -> &'static regex::Regex {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        regex::Regex::new(
+            r"(?i)\b(?:(?:[A-Za-z_][A-Za-z0-9_]*[.:])+(?:[A-Za-z_][A-Za-z0-9_]*(?:Error|Exception)|Error|Exception)|[A-Za-z_][A-Za-z0-9_]*(?:Error|Exception))\b",
+        )
+        .unwrap()
+    })
+}
+
+fn path_re() -> &'static regex::Regex {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        regex::Regex::new(
+            r"(?i)\b(?:[A-Za-z]:[\\/])?(?:[A-Za-z0-9_.@+-]+[\\/])*[A-Za-z0-9_.@+-]+\.[A-Za-z0-9_+-]+(?::\d+(?::\d+)?)?\b",
+        )
+        .unwrap()
+    })
+}
+
+fn paren_location_re() -> &'static regex::Regex {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        regex::Regex::new(r"\b[A-Za-z0-9_.@+-]+\.[A-Za-z0-9_+-]+\(\d+(?:,\d+)?\)").unwrap()
+    })
+}
+
+fn is_diagnostic_evidence(clean: &str) -> bool {
+    let trimmed = clean.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.starts_with("not ok ")
+        || lower.starts_with("failed ")
+        || lower.starts_with("error:")
+        || lower.starts_with("error[")
+        || lower.starts_with("error ")
+        || lower.starts_with("fatal:")
+        || lower.starts_with("panic:")
+        || lower.starts_with("traceback ")
+        || lower.contains("test result: failed")
+        || lower.contains("command not found")
+        || lower.contains("permission denied")
+        || lower.contains(": fatal error:")
+        || lower.contains(": error ")
+    {
+        return true;
+    }
+    diagnostic_code_re().is_match(trimmed) && (lower.contains("error") || lower.contains("failed"))
+        || has_runtime_exception(trimmed)
+}
+
+fn has_runtime_exception(value: &str) -> bool {
+    exception_re()
+        .find_iter(value)
+        .any(|found| has_exception_punctuation(value, found.start(), found.end()))
+}
+
+fn has_exception_punctuation(value: &str, start: usize, end: usize) -> bool {
+    let trimmed = value.trim();
+    if start == value.find(trimmed).unwrap_or(0) && end == start + trimmed.len() {
+        return true;
+    }
+    let before = value[..start].trim_end();
+    let after = value[end..].trim_start();
+    after.starts_with(':') || (before.ends_with('(') && after.starts_with(')'))
+}
+
+fn is_serialized_payload_line(value: &str) -> bool {
+    let trimmed = value.trim();
+    (matches!(trimmed.as_bytes().first(), Some(b'{') | Some(b'['))
+        && serde_json::from_str::<serde_json::Value>(trimmed).is_ok())
+        || (trimmed.contains("\\n")
+            && trimmed.matches('"').count() >= 4
+            && (trimmed.contains("\"output\"") || trimmed.contains("\"content\"")))
+}
+
+fn is_diff_context(command: &[String]) -> bool {
+    let executable = command
+        .first()
+        .and_then(|value| std::path::Path::new(value).file_name())
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let direct = matches!(executable.as_str(), "diff" | "colordiff")
+        || (matches!(executable.as_str(), "git" | "hg" | "svn")
+            && command.iter().skip(1).any(|argument| {
+                matches!(
+                    argument.as_str(),
+                    "diff" | "show" | "format-patch" | "whatchanged"
+                ) || argument == "--patch"
+                    || argument == "-p"
+            }));
+    let shell = matches!(
+        executable.as_str(),
+        "sh" | "bash" | "zsh" | "fish" | "cmd" | "cmd.exe" | "powershell" | "pwsh"
+    );
+    let nested = shell
+        && command.iter().skip(1).any(|argument| {
+            let lower = argument.to_ascii_lowercase();
+            ["git diff", "git show", "hg diff", "svn diff"]
+                .iter()
+                .any(|needle| lower.contains(needle))
+        });
+    direct || nested
+}
+
+fn diff_search_term(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    let remainder = trimmed.strip_prefix("diff --git ")?;
+    let words = split_quoted_words(remainder);
+    let path = if let Some(index) = remainder.rfind(" b/") {
+        &remainder[index + 1..]
+    } else {
+        words.get(1).or_else(|| words.first())?.as_str()
+    };
+    let normalized = path.replace('\\', "/");
+    let normalized = normalized.strip_prefix("b/").unwrap_or(&normalized);
+    if normalized == "/dev/null" {
+        return None;
+    }
+    normalized
+        .rsplit('/')
+        .next()
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
+fn split_quoted_words(value: &str) -> Vec<String> {
+    let mut output = Vec::new();
+    let mut current = String::new();
+    let mut quoted = false;
+    let mut escaped = false;
+    for character in value.chars() {
+        if escaped {
+            current.push(character);
+            escaped = false;
+        } else if character == '\\' && quoted {
+            escaped = true;
+        } else if character == '"' {
+            quoted = !quoted;
+        } else if character.is_whitespace() && !quoted {
+            if !current.is_empty() {
+                output.push(std::mem::take(&mut current));
+            }
+        } else {
+            current.push(character);
+        }
+    }
+    if !current.is_empty() {
+        output.push(current);
+    }
+    output
+}
+
+fn stable_path_term(value: &str) -> String {
+    let normalized = value.replace('\\', "/");
+    let suffix_start = normalized
+        .char_indices()
+        .rev()
+        .filter(|(_, character)| *character == '/')
+        .nth(2)
+        .map_or(0, |(index, _)| index + 1);
+    normalized[suffix_start..].to_string()
 }
 
 fn score_line(
@@ -350,6 +568,10 @@ fn score_line(
         score += 20;
         reasons.push("successful check".to_string());
     }
+    if trimmed.starts_with("diff --git ") {
+        score += 140;
+        reasons.push("structure/diff".to_string());
+    }
     let severe = [
         "fatal",
         "error",
@@ -363,6 +585,7 @@ fn score_line(
     if !successful
         && !diff_content
         && (severe.iter().any(|word| tokens.contains(*word))
+            || has_runtime_exception(trimmed)
             || [
                 "permission denied",
                 "no such file",
@@ -479,11 +702,39 @@ fn is_failure_outcome(trimmed: &str) -> bool {
         || trimmed.starts_with("error: could not")
         || trimmed.starts_with("error: aborting")
         || trimmed.starts_with("fatal:")
+        || trimmed.starts_with("panic:")
         || trimmed.starts_with("traceback ")
         || trimmed.starts_with("diff in ")
         || trimmed.contains("test result: failed")
         || trimmed.contains("process completed with exit code")
         || trimmed.contains("tests failed")
+        || trimmed.contains("command not found")
+        || trimmed.contains("permission denied")
+        || starts_with_exception_type(trimmed)
+}
+
+fn starts_with_exception_type(trimmed: &str) -> bool {
+    exception_re().find(trimmed).is_some_and(|found| {
+        found.start() == 0 && has_exception_punctuation(trimmed, 0, found.end())
+    })
+}
+
+fn is_dependency_path(value: &str) -> bool {
+    let lower = value.replace('\\', "/").to_ascii_lowercase();
+    [
+        ".cargo/registry/",
+        "cargo/registry/",
+        "node_modules/",
+        "site-packages/",
+        "vendor/",
+        "go/pkg/mod/",
+        ".gradle/caches/",
+        ".m2/repository/",
+        ".nuget/packages/",
+        "/gems/",
+    ]
+    .iter()
+    .any(|part| lower.contains(part))
 }
 
 fn is_success_outcome(trimmed: &str) -> bool {
@@ -680,6 +931,81 @@ mod tests {
         assert!(terms.contains(&"E0425".to_string()));
         assert!(terms.contains(&"clippy::collapsible_if".to_string()));
         assert!(terms.contains(&"src/lib.rs:42:7".to_string()));
+        assert!(
+            structured_search_terms(
+                "error: in cargo/registry/src/pkg/src/lib.rs and src/main.rs:7:2"
+            )
+            .iter()
+            .all(|term| !term.contains("cargo/registry"))
+        );
+        assert!(is_failure_outcome("assertionerror: expected value"));
+    }
+
+    #[test]
+    fn search_terms_cover_broad_diagnostic_grammars() {
+        assert!(
+            structured_search_terms("panic: runtime error: index out of range")
+                .iter()
+                .any(|term| term.starts_with("panic:"))
+        );
+        assert!(
+            structured_search_terms(
+                "Program.cs(17,9): error CS0103: a referenced name does not exist"
+            )
+            .iter()
+            .any(|term| term == "CS0103")
+        );
+        assert!(
+            structured_search_terms(
+                "app/service.rb:23:in `call': undefined method for nil (NoMethodError)"
+            )
+            .iter()
+            .any(|term| term == "NoMethodError")
+        );
+        assert!(
+            structured_search_terms("shutil.Error: file operation failed")
+                .iter()
+                .any(|term| term == "shutil.Error")
+        );
+        assert!(
+            structured_search_terms("deploy.sh: command not found")
+                .iter()
+                .any(|term| term == "command not found")
+        );
+    }
+
+    #[test]
+    fn suggestions_reject_prose_serialization_and_dependency_paths() {
+        assert!(!is_diagnostic_evidence(
+            "ValueError is commonly used to report conversion failures."
+        ));
+        assert!(is_serialized_payload_line(
+            r#"{"status":"failed","example":"TypeError: demonstration"}"#
+        ));
+        assert!(is_dependency_path(
+            r"C:\project\node_modules\package\index.js:8:3"
+        ));
+        assert!(is_dependency_path(
+            "/home/user/go/pkg/mod/example.org/lib/core.go:44"
+        ));
+    }
+
+    #[test]
+    fn diff_suggestions_require_context_and_parse_quoted_paths() {
+        assert_eq!(
+            diff_search_term(r#"diff --git "a/docs/old name.md" "b/docs/new name.md""#),
+            Some("new name.md".into())
+        );
+        assert_eq!(
+            diff_search_term("diff --git a/docs/old name.md b/docs/new name.md"),
+            Some("new name.md".into())
+        );
+        assert!(is_diff_context(&[
+            "git".into(),
+            "diff".into(),
+            "--stat".into()
+        ]));
+        assert!(!is_diff_context(&["cat".into(), "guide.md".into()]));
     }
 
     #[test]

@@ -7,6 +7,7 @@ mod summarize;
 mod transform;
 mod util;
 
+use std::collections::HashMap;
 use std::io::{self, IsTerminal};
 use std::process::{Command, Stdio};
 use std::time::SystemTime;
@@ -17,6 +18,8 @@ use storage::{StoredResult, effective_store_dir};
 
 const AUTO_SUMMARY_THRESHOLD: u64 = 2 * 1024;
 const BATCH_CAPTURE_THRESHOLD: u64 = 3 * 1024;
+const EXACT_GUARD_MIN_LINES: usize = 40;
+const EXACT_GUARD_MAX_LINES: usize = 20_000;
 const MAX_IMPORTANT_LINES: usize = 10;
 const MAX_SEARCH_RESULTS: usize = 5;
 
@@ -44,6 +47,7 @@ fn real_main() -> Result<i32, String> {
             Ok(0)
         }
         Mode::Exact => run_exact(&config),
+        Mode::Check => run_check(&config),
         Mode::Auto => run_auto(&config),
         Mode::Capture => run_capture(&config),
         Mode::Search => run_search(&config),
@@ -61,6 +65,40 @@ fn real_main() -> Result<i32, String> {
 }
 
 fn run_exact(config: &Config) -> Result<i32, String> {
+    if io::stdout().is_terminal() || io::stderr().is_terminal() {
+        return run_streaming_exact(config);
+    }
+    let ranking = ranking_terms(config);
+    let capture = match capture::capture_command(&config.cmd, &ranking)? {
+        Ok(capture) => capture,
+        Err(code) => {
+            record_event(config, code, 0, None);
+            return Ok(code);
+        }
+    };
+    if should_guard_exact(&capture)? {
+        let store_dir = effective_store_dir(config.store_dir.as_ref())?;
+        let stored = storage::store_capture(&store_dir, &config.cmd, &ranking, &capture)?;
+        util::stdout_line(&format!(
+            "Auto-switched exact -> summary: non-interactive output was {} B/{} lines and highly repetitive; full capture retained.",
+            capture.total_bytes(),
+            capture.total_lines
+        ))?;
+        print_summary(&stored.metadata, &capture)?;
+        record_event(
+            config,
+            capture.exit_code,
+            capture.duration_ms,
+            Some(&stored.metadata),
+        );
+    } else {
+        replay_capture(&capture)?;
+        record_event(config, capture.exit_code, capture.duration_ms, None);
+    }
+    Ok(capture.exit_code)
+}
+
+fn run_streaming_exact(config: &Config) -> Result<i32, String> {
     let cmd = &config.cmd;
     if cmd.is_empty() {
         return Err(cli::USAGE.to_string());
@@ -92,6 +130,76 @@ fn run_exact(config: &Config) -> Result<i32, String> {
     }
 }
 
+fn should_guard_exact(capture: &CaptureResult) -> Result<bool, String> {
+    if capture.total_bytes() < AUTO_SUMMARY_THRESHOLD
+        || capture.total_lines < EXACT_GUARD_MIN_LINES
+        || capture.stdout.binary
+        || capture.stderr.binary
+        || capture.stdout.non_utf8
+        || capture.stderr.non_utf8
+    {
+        return Ok(false);
+    }
+    let mut readers = capture.readers()?;
+    let mut counts = HashMap::<String, usize>::new();
+    let mut eligible = 0_usize;
+    for line in capture.timeline.iter().take(EXACT_GUARD_MAX_LINES) {
+        if !(12..=4096).contains(&line.length) {
+            continue;
+        }
+        let text = readers.read_display_line(line)?;
+        let Some(key) = exact_repetition_key(&text) else {
+            continue;
+        };
+        eligible += 1;
+        *counts.entry(key).or_default() += 1;
+    }
+    if eligible < EXACT_GUARD_MIN_LINES {
+        return Ok(false);
+    }
+    Ok(is_highly_repetitive(&counts, eligible))
+}
+
+fn exact_repetition_key(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.chars().count() < 12 {
+        return None;
+    }
+    let mut key = String::new();
+    let mut in_digits = false;
+    let mut in_space = false;
+    for character in trimmed.chars() {
+        if character.is_ascii_digit() {
+            if !in_digits {
+                key.push('#');
+            }
+            in_digits = true;
+            in_space = false;
+        } else if character.is_whitespace() {
+            if !in_space {
+                key.push(' ');
+            }
+            in_space = true;
+            in_digits = false;
+        } else {
+            key.push(character);
+            in_digits = false;
+            in_space = false;
+        }
+        if key.chars().count() >= 48 {
+            break;
+        }
+    }
+    Some(key)
+}
+
+fn is_highly_repetitive(counts: &HashMap<String, usize>, eligible: usize) -> bool {
+    let repeated = counts.values().filter(|&&count| count >= 3).sum::<usize>();
+    let dominant = counts.values().copied().max().unwrap_or(0);
+    repeated.saturating_mul(100) >= eligible.saturating_mul(70)
+        && dominant.saturating_mul(100) >= eligible.saturating_mul(25)
+}
+
 fn run_auto(config: &Config) -> Result<i32, String> {
     if io::stdout().is_terminal() || io::stderr().is_terminal() {
         return run_exact(config);
@@ -115,6 +223,41 @@ fn run_auto(config: &Config) -> Result<i32, String> {
         && !capture.stdout.non_utf8
         && !capture.stderr.non_utf8;
     store_and_summarize(config, &capture, compact)
+}
+
+fn run_check(config: &Config) -> Result<i32, String> {
+    let ranking = ranking_terms(config);
+    let capture = match capture::capture_command(&config.cmd, &ranking)? {
+        Ok(capture) => capture,
+        Err(code) => {
+            util::stdout_line(&format!(
+                "{} | exit={code} | duration=0ms | result=-",
+                check_label(code)
+            ))?;
+            record_event(config, code, 0, None);
+            return Ok(code);
+        }
+    };
+    let store_dir = effective_store_dir(config.store_dir.as_ref())?;
+    let stored = storage::store_capture(&store_dir, &config.cmd, &ranking, &capture)?;
+    util::stdout_line(&format!(
+        "{} | exit={} | duration={}ms | result={}",
+        check_label(capture.exit_code),
+        capture.exit_code,
+        capture.duration_ms,
+        stored.metadata.result_id
+    ))?;
+    record_event(
+        config,
+        capture.exit_code,
+        capture.duration_ms,
+        Some(&stored.metadata),
+    );
+    Ok(capture.exit_code)
+}
+
+fn check_label(exit_code: i32) -> &'static str {
+    if exit_code == 0 { "PASS" } else { "FAIL" }
 }
 
 fn should_capture(capture: &CaptureResult) -> bool {
@@ -828,4 +971,33 @@ pub(crate) fn spawn_command(cmd: &[String]) -> Result<std::process::Child, Strin
                 format!("failed to spawn {}: {error}", cmd[0])
             }
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{exact_repetition_key, is_highly_repetitive};
+    use std::collections::HashMap;
+
+    #[test]
+    fn exact_repetition_key_normalizes_dynamic_log_fields() {
+        let first = r#"{"time":"2026-07-11T14:43:02.198528+08:00","level":"INFO","msg":"loading plugin","id":"alpha"}"#;
+        let second = r#"{"time":"2026-07-12T09:04:51.777001+08:00","level":"INFO","msg":"loading plugin","id":"beta"}"#;
+        assert_eq!(exact_repetition_key(first), exact_repetition_key(second));
+    }
+
+    #[test]
+    fn exact_repetition_policy_requires_broad_and_dominant_repetition() {
+        let repetitive = HashMap::from([
+            ("common".to_string(), 60),
+            ("secondary".to_string(), 20),
+            ("unique-a".to_string(), 1),
+            ("unique-b".to_string(), 19),
+        ]);
+        assert!(is_highly_repetitive(&repetitive, 100));
+
+        let varied = (0..100)
+            .map(|index| (format!("line-{index}"), 1))
+            .collect::<HashMap<_, _>>();
+        assert!(!is_highly_repetitive(&varied, 100));
+    }
 }

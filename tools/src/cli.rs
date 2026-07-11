@@ -4,6 +4,7 @@ pub const USAGE: &str = "\
 Usage:
   pira_ctx [--store-dir PATH] --intent TEXT [--keyword QUERY ...] -- <command> [args...]
   pira_ctx exact --intent TEXT [--store-dir PATH] -- <command> [args...]
+  pira_ctx check --intent TEXT [--store-dir PATH] -- <command> [args...]
   pira_ctx capture|summary [--store-dir PATH] --intent TEXT [--keyword QUERY ...] -- <command> [args...]
   pira_ctx batch [--store-dir PATH] SPEC_FILE [--intent TEXT]
   pira_ctx search [--store-dir PATH] RESULT QUERY [--regex] [--context N]
@@ -20,7 +21,8 @@ Usage:
   pira_ctx --help | --version
 
 RESULT may be --last, a result ID/prefix, filename, or path.
-INTENT must be a non-empty, single-line purpose of at most 256 UTF-8 bytes.";
+INTENT must be a non-empty, single-line purpose of at most 256 UTF-8 bytes.
+Non-interactive exact mode retains and summarizes output only when it is both long and highly repetitive.";
 
 pub const MAX_INTENT_BYTES: usize = 256;
 pub const MAX_KEYWORDS: usize = 16;
@@ -30,6 +32,7 @@ pub const MAX_KEYWORD_BYTES: usize = 256;
 pub enum Mode {
     Auto,
     Exact,
+    Check,
     Capture,
     Search,
     Range,
@@ -130,6 +133,12 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     match args[0].as_str() {
         "exact" => {
             c.mode = Mode::Exact;
+            let p = parse_exec_options(&mut c, args, 1, false)?;
+            parse_command(&mut c, args, p)?;
+            require_intent(&mut c)?;
+        }
+        "check" => {
+            c.mode = Mode::Check;
             let p = parse_exec_options(&mut c, args, 1, false)?;
             parse_command(&mut c, args, p)?;
             require_intent(&mut c)?;
@@ -463,6 +472,16 @@ mod tests {
                 .mode,
             Mode::Capture
         )
+    }
+    #[test]
+    fn check_is_an_intent_required_execution_mode() {
+        assert!(parse_args(&a(&["check", "--", "echo"])).is_err());
+        assert_eq!(
+            parse_args(&a(&["check", "--intent", "validate", "--", "echo"]))
+                .unwrap()
+                .mode,
+            Mode::Check
+        );
     }
     #[test]
     fn internal_needs_no_intent() {

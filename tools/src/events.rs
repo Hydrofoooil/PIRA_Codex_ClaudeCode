@@ -72,7 +72,8 @@ pub fn record(
     options.mode(0o600);
     let mut file = options.open(&tmp).map_err(|e| e.to_string())?;
     file.write_all(&bytes).map_err(|e| e.to_string())?;
-    file.sync_all().map_err(|e| e.to_string())?;
+    // Events are best-effort recap hints rather than checked captures. Rename
+    // atomically, but do not add another disk barrier to every wrapped command.
     fs::rename(&tmp, &final_path).map_err(|e| e.to_string())?;
     cap_event_count(&dir, 2000)?;
     Ok(())

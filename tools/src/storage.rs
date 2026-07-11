@@ -177,7 +177,7 @@ pub fn store_capture(
     let base_id = format!("{}-{}", timestamp, short_hash(&seed, 12));
     let (result_id, filename, path) = available_result_path(store_dir, &base_id);
     let detected_paths = summarize::detected_paths(capture)?;
-    let suggested_keywords = summarize::suggested_keywords(capture, keywords)?;
+    let suggested_keywords = summarize::suggested_keywords(capture, command, keywords)?;
     let metadata = Metadata {
         compat_version: FORMAT_VERSION,
         tool_version: format!("pira_ctx-{}", env!("CARGO_PKG_VERSION")),
@@ -484,7 +484,8 @@ fn encode_block_stream(path: &Path, label: &str) -> Result<(Vec<u8>, PathBuf, u6
         logical += count as u64;
         payload += bytes.len() as u64;
     }
-    output.sync_all().map_err(|e| e.to_string())?;
+    // The block file is only staging. write_container synchronizes the final,
+    // authenticated capture after copying this payload.
     Ok((encode_block_table(&descriptors), temp, payload))
 }
 fn encode_block_table(blocks: &[BlockDescriptor]) -> Vec<u8> {
@@ -970,8 +971,9 @@ fn append_index(path: &Path, entry: &ListedEntry) -> Result<(), String> {
     options.mode(0o600);
     let mut file = options.open(path).map_err(|error| error.to_string())?;
     serde_json::to_writer(&mut file, entry).map_err(|error| error.to_string())?;
-    file.write_all(b"\n").map_err(|error| error.to_string())?;
-    file.sync_data().map_err(|error| error.to_string())
+    // The index is derived from durable captures and can be rebuilt. Avoid an
+    // additional disk barrier on every command.
+    file.write_all(b"\n").map_err(|error| error.to_string())
 }
 
 pub fn resolve_result(store_dir: &Path, target: &str) -> Result<PathBuf, String> {

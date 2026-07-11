@@ -259,7 +259,8 @@ fn read_stream<R: Read>(
             length: offset - line_start,
         });
     }
-    output.sync_all()?;
+    // This is an ephemeral spool. Closing the writer makes its bytes visible to
+    // the later reader; durable synchronization belongs to the final capture.
     let digest: [u8; 32] = hasher.finalize().into();
     Ok(StreamAnalysis {
         length: offset,

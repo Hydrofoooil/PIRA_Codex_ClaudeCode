@@ -4,6 +4,10 @@ PIRA (pronounced "Pyra") is the public-facing name of PI: a plain-text, research
 
 PIRA is designed to be warm, honest about uncertainty, evidence-first when evidence matters, and lightweight enough to inspect and customize.
 
+## Tested compatibility
+
+PIRA has been tested extensively with **Codex using GPT-5.4, GPT-5.5, and 5.6-sol, each with high reasoning effort**.
+
 ## Quick start
 
 PIRA's default install lives at `~/agent`. The setup script is idempotent, backs up user-level Codex files before editing them, supports dry-run/verify modes, and is safe to rerun on an existing install. You need Git; the setup wrapper handles Python discovery and can offer platform-specific Python install help.
@@ -124,6 +128,81 @@ python3 assets/scripts/setup_pira_tools.py --verify
 
 If setup cannot safely handle an existing conflicting file or Codex setting, it stops or skips that action with a warning instead of silently overwriting it.
 
+## `pira_ctx`: lightweight command context
+
+`pira_ctx` keeps large command output from overwhelming the model context without discarding the original data. Its default behavior is simple:
+
+1. Ordinary short output is returned directly.
+2. Long or diagnostic output is stored locally, while the model receives a bounded extractive synopsis and a capture ID.
+3. If more detail is needed, the complete capture remains available for targeted search, line-range retrieval, transformation, or exact replay.
+
+For compile, test, lint, or other validation jobs where only success or failure matters, `check` stores the complete log but prints one PASS/FAIL status line with the child exit code and capture ID.
+
+Explicit `exact` mode streams unchanged when attached to a terminal. In non-interactive agent calls it buffers the result so that long, highly repetitive logs can be auto-switched to a retained summary instead of flooding context; genuinely varied output remains exact, and every switched response announces the decision.
+
+Setup installs a verified native executable in the user's `PATH`. Normal use requires no Python, Rust toolchain, daemon, database, network service, or model call. Captures are private user-cache files with independently compressed blocks and integrity hashes. `pira_ctx` preserves the caller's permissions and does not sandbox commands. Run `pira_ctx --help` for the complete interface. The Rust source is under `tools/src`, and verified builds for macOS arm64/x64, Linux arm64/x64, and Windows x64 are under `tools/dist/pira_ctx`.
+
+### Prospective held-out benchmark
+
+The current `pira_ctx 0.5.2` source and release artifacts were frozen before collecting **43 new outputs from ten fixed public repositories**. The corpus was collected, sanitized, deduplicated against earlier private corpora, and evaluated once without subsequent implementation or threshold tuning. Every retained response was at least 2 KiB and entered full automatic-summary mode.
+
+| Mode on the same 3,436,926 raw bytes | Returned context | Complete stored state | Median overhead | Immediate changed-file visibility |
+|---|---:|---:|---:|---:|
+| `pira_ctx` automatic synopsis | 40,272 B (98.8% reduction) | 724,318 B (78.9% reduction) | +15.0 ms | 1/8 |
+| Context Mode generic passthrough | 44,835 B (98.7% reduction) | 23,437,772 B (581.9% overhead) | +26.5 ms | 3/8 |
+| `pira_ctx check` | 2,924 B (99.9% reduction) | 724,447 B (78.9% reduction) | +14.0 ms | N/A—status only |
+| Context Mode `ctx_index` receipt | 7,323 B (99.8% reduction) | 18,436,546 B (436.4% overhead) | N/A—no corresponding raw baseline | 0/8 |
+
+All 43 PIRA captures preserved child status, reconstructed the exact sanitized stdout, and passed integrity verification. Automatic suggestions correctly abstained in 35/35 unlabeled cases, but changed-filename recall was only 1/8. This is a current generalization weakness, deliberately reported without tuning it against the held-out corpus.
+
+<details>
+<summary>Benchmark method, category results, comparison scope, and limitations</summary>
+
+#### Corpus and PIRA protocol
+
+The five categories use recent public VCS patches, largest tracked Rust files, recursive declaration listings, 40-commit terminal logs, and GitHub pull-list responses. Candidate outputs were generated only after the binary and source freeze. Fixed-point sanitation removed private values and paths; exact and structural duplicates against 226 earlier private cases were rejected. Public changed basenames were preserved as explicit sanitized diff metadata so the predeclared suggestion labels remained observable.
+
+A preceding candidate collection was not reported after audit found that sanitation had replaced every changed-filename label with a generic placeholder. The implementation was not changed after seeing that invalid measurement. The final protocol fixed the label-preservation rule and repository list before collecting an entirely new corpus.
+
+Automatic and `check` modes used one persistent store each. Every call was compared with the identical raw fixture-emitter command. Overhead is `wrapped wall time - raw-operation wall time`, summarized by the per-case median. Complete stored state includes captures, indexes, and event history after all calls; installed binaries and build/runtime dependencies are excluded.
+
+| Held-out category | Cases | Changed-basename recall | Correct abstentions | Context reduction |
+|---|---:|---:|---:|---:|
+| File reads | 9 | — | 9/9 | 98.8% |
+| GitHub pull retrieval | 8 | — | 8/8 | 99.4% |
+| Search and listing | 9 | — | 9/9 | 99.0% |
+| Terminal logs | 9 | — | 9/9 | 95.7% |
+| Version-control diffs | 8 | 1/8 | — | 90.3% |
+| **Overall** | **43** | **1/8** | **35/35** | **98.8%** |
+
+#### Context Mode comparison
+
+Context Mode 1.0.169 was installed inside the retained Docker Sandbox and run without errors on the identical sanitized fixtures, with one persistent server per mode. Generic passthrough used `ctx_execute_file` to print each fixture unchanged and supplied the same category-level intent as PIRA. Its direct Node file emitter provided its own raw baseline, so Docker startup and server initialization are excluded from the overhead figure. `ctx_index` has no equivalent raw indexing operation, so no synthetic overhead is reported.
+
+Generic passthrough is the closest wrapper-level comparison, but it is not Context Mode's recommended workflow. Context Mode normally asks the model to write task-specific analysis code and return only the derived answer. Its [published benchmark](https://github.com/mksglu/context-mode/blob/main/BENCHMARK.md) reports 98% reduction for task-specific execution, 82% for exact index-plus-search retrieval, and 96% overall. The table therefore compares concrete wrapper behaviors on one corpus, not the full capability or preferred workflow of either system.
+
+Returned-context measurements count UTF-8 bytes, not tokenizer-specific tokens. Immediate visibility checks only whether a preserved changed basename appears in the first response; they do not measure evidence recoverable through later search. Context Mode storage includes its richer SQLite FTS5 retrieval indexes, and fixed database overhead is material on this 3.44 MB corpus.
+
+#### Limitations
+
+This is a private implementation benchmark on one arm64 macOS host, not a universal performance claim. It covers successful outputs only and contains no build, test, static-analysis, LaTeX, binary, non-UTF-8, or interactive-terminal cases. GitHub/API availability and conservative privacy filtering reduced category counts unevenly. Diff labels measure changed-basename recall, not complete diagnostic usefulness. Web-search returns are intentionally excluded because Codex built-in web output is not directly captured by the local command wrapper.
+
+</details>
+
+### Relationship to Context Mode
+
+`pira_ctx` was informed by [Context Mode](https://github.com/mksglu/context-mode), especially its ideas of keeping raw tool output out of context, attaching intent to execution, retrieving indexed evidence after compaction, and analyzing stored output with small programs. We thank its contributors for publishing and explaining these ideas.
+
+| Dimension | `pira_ctx` | Context Mode |
+|---|---|---|
+| Integration | Native wrapper for explicit external commands | MCP server plus platform plugins and hooks |
+| Runtime and storage | One Rust executable and self-contained checked capture files | Node/Bun integration with a SQLite FTS5 knowledge base |
+| Reach | Commands deliberately routed through the wrapper | Broader shell, file, web, and MCP routing where integrations support it |
+| Continuity | Bounded same-session recap after compaction | Explicit session lifecycle and continuation support |
+| Safety scope | Preserves caller permissions; does not sandbox children | Adds sandbox and permission-policy integration |
+
+PIRA uses `pira_ctx` when a small dependency-free command wrapper and exact local fallback are preferable. Context Mode is the more comprehensive option when broader interception, hooks, sandboxing, or database-backed retrieval are needed.
+
 ## Optional Codex audio notifications
 
 Audio notifications are optional and are supported only for **Codex on macOS or Windows**. They are off by default and should not be presented as supported for Claude Code, other agent tools, Linux, or other systems.
@@ -210,10 +289,6 @@ PIRA can run in soft-safe full-permission mode, but it is not a sandbox. Its saf
 
 Subagents should load the same bootstrap policy as the main agent. This is handled by Codex but has not been tested on other agents.
 
-## Tested compatibility
-
-PIRA has been tested extensively with **Codex using GPT-5.4/5.5 on high reasoning effort**.
-
 ## Repository layout
 
 - `AGENTS.md` — bootstrap instructions and module routing policy
@@ -222,6 +297,8 @@ PIRA has been tested extensively with **Codex using GPT-5.4/5.5 on high reasonin
 - `USER.md` — user-specific knowledge and working preferences; keep this private
 - `modules/` — optional task-specific modules for research, coding, writing, learning, guidance, and maintenance
 - `assets/scripts/` — setup and helper scripts
+- `tools/src/` — public Rust implementation of `pira_ctx`
+- `tools/dist/pira_ctx/` — verified prebuilt `pira_ctx` executables and bundle manifest
 - `PIRA_Voice/Samantha/` — default audio clips for optional Codex notifications
 
 ## Public/private split
