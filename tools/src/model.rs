@@ -188,12 +188,33 @@ impl ListedEntry {
 
 #[derive(Debug)]
 pub struct StreamReaders {
-    stdout: BufReader<File>,
-    stderr: BufReader<File>,
-    stdout_base: u64,
-    stderr_base: u64,
-    stdout_length: u64,
-    stderr_length: u64,
+    stdout: SectionReader,
+    stderr: SectionReader,
+}
+
+#[derive(Debug, Clone)]
+pub struct BlockDescriptor {
+    pub codec: u8,
+    pub logical_offset: u64,
+    pub uncompressed_length: u64,
+    pub stored_length: u64,
+    pub payload_offset: u64,
+}
+
+#[derive(Debug)]
+enum SectionReader {
+    Raw {
+        reader: BufReader<File>,
+        base: u64,
+        length: u64,
+    },
+    Blocks {
+        file: File,
+        base: u64,
+        length: u64,
+        blocks: Vec<BlockDescriptor>,
+        cache: Option<(usize, Vec<u8>)>,
+    },
 }
 
 impl StreamReaders {
@@ -206,12 +227,43 @@ impl StreamReaders {
         stderr_length: u64,
     ) -> Result<Self, String> {
         Ok(Self {
-            stdout: BufReader::new(File::open(stdout_path).map_err(|error| error.to_string())?),
-            stderr: BufReader::new(File::open(stderr_path).map_err(|error| error.to_string())?),
-            stdout_base,
-            stderr_base,
-            stdout_length,
-            stderr_length,
+            stdout: SectionReader::Raw {
+                reader: BufReader::new(File::open(stdout_path).map_err(|error| error.to_string())?),
+                base: stdout_base,
+                length: stdout_length,
+            },
+            stderr: SectionReader::Raw {
+                reader: BufReader::new(File::open(stderr_path).map_err(|error| error.to_string())?),
+                base: stderr_base,
+                length: stderr_length,
+            },
+        })
+    }
+
+    pub fn from_blocks(
+        path: &std::path::Path,
+        stdout_base: u64,
+        stdout_length: u64,
+        stdout_blocks: Vec<BlockDescriptor>,
+        stderr_base: u64,
+        stderr_length: u64,
+        stderr_blocks: Vec<BlockDescriptor>,
+    ) -> Result<Self, String> {
+        Ok(Self {
+            stdout: SectionReader::Blocks {
+                file: File::open(path).map_err(|e| e.to_string())?,
+                base: stdout_base,
+                length: stdout_length,
+                blocks: stdout_blocks,
+                cache: None,
+            },
+            stderr: SectionReader::Blocks {
+                file: File::open(path).map_err(|e| e.to_string())?,
+                base: stderr_base,
+                length: stderr_length,
+                blocks: stderr_blocks,
+                cache: None,
+            },
         })
     }
 
@@ -226,53 +278,27 @@ impl StreamReaders {
     }
 
     fn read_bounded(&mut self, line: &LineMeta, maximum: u64) -> Result<Vec<u8>, String> {
-        let (reader, base, section_length) = self.parts_mut(line.stream);
+        let reader = self.parts_mut(line.stream);
+        let section_length = reader.length();
         validate_line(line, section_length)?;
-        reader
-            .seek(SeekFrom::Start(base + line.offset))
-            .map_err(|error| error.to_string())?;
         if line.length <= maximum {
-            let size = usize::try_from(line.length).map_err(|_| "line is too large".to_string())?;
-            let mut bytes = vec![0; size];
-            reader
-                .read_exact(&mut bytes)
-                .map_err(|error| error.to_string())?;
-            return Ok(bytes);
+            return reader.read_range(line.offset, line.length);
         }
         let prefix_length = maximum / 2;
         let suffix_length = maximum - prefix_length;
-        let mut bytes =
-            vec![0; usize::try_from(prefix_length).map_err(|_| "line is too large".to_string())?];
-        reader
-            .read_exact(&mut bytes)
-            .map_err(|error| error.to_string())?;
+        let mut bytes = reader.read_range(line.offset, prefix_length)?;
         bytes.extend_from_slice(b" ... [line read truncated] ... ");
-        reader
-            .seek(SeekFrom::Start(
-                base + line.offset + line.length - suffix_length,
-            ))
-            .map_err(|error| error.to_string())?;
-        let old_length = bytes.len();
-        bytes.resize(
-            old_length
-                + usize::try_from(suffix_length).map_err(|_| "line is too large".to_string())?,
-            0,
+        bytes.extend_from_slice(
+            &reader.read_range(line.offset + line.length - suffix_length, suffix_length)?,
         );
-        reader
-            .read_exact(&mut bytes[old_length..])
-            .map_err(|error| error.to_string())?;
         Ok(bytes)
     }
 
     pub fn copy_line<W: Write>(&mut self, line: &LineMeta, output: &mut W) -> Result<(), String> {
-        let (reader, base, section_length) = self.parts_mut(line.stream);
+        let reader = self.parts_mut(line.stream);
+        let section_length = reader.length();
         validate_line(line, section_length)?;
-        reader
-            .seek(SeekFrom::Start(base + line.offset))
-            .map_err(|error| error.to_string())?;
-        let mut limited = reader.take(line.length);
-        std::io::copy(&mut limited, output).map_err(util::io_error)?;
-        Ok(())
+        reader.copy_range(line.offset, line.length, output)
     }
 
     pub fn copy_section<W: Write>(
@@ -280,19 +306,91 @@ impl StreamReaders {
         stream: StreamKind,
         output: &mut W,
     ) -> Result<(), String> {
-        let (reader, base, section_length) = self.parts_mut(stream);
-        reader
-            .seek(SeekFrom::Start(base))
-            .map_err(|error| error.to_string())?;
-        let mut limited = reader.take(section_length);
-        std::io::copy(&mut limited, output).map_err(util::io_error)?;
-        Ok(())
+        let reader = self.parts_mut(stream);
+        let length = reader.length();
+        reader.copy_range(0, length, output)
     }
 
-    fn parts_mut(&mut self, stream: StreamKind) -> (&mut BufReader<File>, u64, u64) {
+    fn parts_mut(&mut self, stream: StreamKind) -> &mut SectionReader {
         match stream {
-            StreamKind::Stdout => (&mut self.stdout, self.stdout_base, self.stdout_length),
-            StreamKind::Stderr => (&mut self.stderr, self.stderr_base, self.stderr_length),
+            StreamKind::Stdout => &mut self.stdout,
+            StreamKind::Stderr => &mut self.stderr,
+        }
+    }
+}
+
+impl SectionReader {
+    fn length(&self) -> u64 {
+        match self {
+            Self::Raw { length, .. } | Self::Blocks { length, .. } => *length,
+        }
+    }
+    fn read_range(&mut self, offset: u64, length: u64) -> Result<Vec<u8>, String> {
+        let size = usize::try_from(length).map_err(|_| "range too large")?;
+        let mut out = Vec::with_capacity(size);
+        self.copy_range(offset, length, &mut out)?;
+        Ok(out)
+    }
+    fn copy_range<W: Write>(
+        &mut self,
+        offset: u64,
+        length: u64,
+        out: &mut W,
+    ) -> Result<(), String> {
+        if offset.checked_add(length).is_none_or(|e| e > self.length()) {
+            return Err("stream range exceeds section".into());
+        }
+        match self {
+            Self::Raw { reader, base, .. } => {
+                reader
+                    .seek(SeekFrom::Start(*base + offset))
+                    .map_err(|e| e.to_string())?;
+                let mut limited = reader.take(length);
+                std::io::copy(&mut limited, out).map_err(util::io_error)?;
+                Ok(())
+            }
+            Self::Blocks {
+                file,
+                base,
+                blocks,
+                cache,
+                ..
+            } => {
+                let end = offset + length;
+                for (index, b) in blocks.iter().enumerate() {
+                    let bend = b.logical_offset + b.uncompressed_length;
+                    if bend <= offset || b.logical_offset >= end {
+                        continue;
+                    }
+                    if cache.as_ref().is_none_or(|(i, _)| *i != index) {
+                        file.seek(SeekFrom::Start(*base + b.payload_offset))
+                            .map_err(|e| e.to_string())?;
+                        let mut stored = vec![
+                            0;
+                            usize::try_from(b.stored_length)
+                                .map_err(|_| "block too large")?
+                        ];
+                        file.read_exact(&mut stored).map_err(|e| e.to_string())?;
+                        let decoded = match b.codec {
+                            0 => stored,
+                            1 => lz4_flex::block::decompress(
+                                &stored,
+                                usize::try_from(b.uncompressed_length)
+                                    .map_err(|_| "block too large")?,
+                            )
+                            .map_err(|e| format!("lz4 decode: {e}"))?,
+                            _ => return Err("unsupported block codec".into()),
+                        };
+                        *cache = Some((index, decoded));
+                    }
+                    let data = &cache.as_ref().unwrap().1;
+                    let from = offset.max(b.logical_offset) - b.logical_offset;
+                    let to = end.min(bend) - b.logical_offset;
+                    out.write_all(&data[from as usize..to as usize])
+                        .map_err(|e| e.to_string())?;
+                }
+                Ok(())
+            }
         }
     }
 }

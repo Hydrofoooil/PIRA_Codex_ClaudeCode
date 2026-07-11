@@ -1,4 +1,3 @@
-use std::collections::VecDeque;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
@@ -10,6 +9,8 @@ use sha2::{Digest, Sha256};
 
 use crate::model::{CaptureResult, LineMeta, StreamKind, TempSpool};
 use crate::{spawn_command, summarize, util};
+
+const MAX_CAPTURE_LINES: usize = 2_000_000;
 
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
@@ -29,16 +30,13 @@ struct StreamAnalysis {
     non_utf8: bool,
 }
 
-const MAX_INDEXED_LINES: usize = 50_000;
-const INDEX_HEAD_LINES: usize = MAX_INDEXED_LINES / 2;
-const INDEX_TAIL_LINES: usize = MAX_INDEXED_LINES - INDEX_HEAD_LINES;
-
 struct CollectedLines {
     timeline: Vec<LineMeta>,
     total: usize,
     stdout: usize,
     stderr: usize,
     truncated: bool,
+    exceeded_limit: bool,
 }
 
 pub fn capture_command(
@@ -94,6 +92,11 @@ pub fn capture_command(
     let collected = collector_handle
         .join()
         .map_err(|_| "line collector panicked".to_string())?;
+    if collected.exceeded_limit {
+        return Err(format!(
+            "capture exceeded the {MAX_CAPTURE_LINES}-line safety limit; reduce or pre-filter the child output"
+        ));
+    }
     let stdout = TempSpool {
         path: stdout_spool.disarm(),
         length: stdout_analysis.length,
@@ -128,8 +131,7 @@ pub fn capture_command(
 }
 
 fn collect_lines(receiver: mpsc::Receiver<StreamLine>) -> CollectedLines {
-    let mut head = Vec::with_capacity(INDEX_HEAD_LINES);
-    let mut tail = VecDeque::with_capacity(INDEX_TAIL_LINES);
+    let mut timeline = Vec::new();
     let mut total = 0_usize;
     let mut stdout = 0_usize;
     let mut stderr = 0_usize;
@@ -147,23 +149,17 @@ fn collect_lines(receiver: mpsc::Receiver<StreamLine>) -> CollectedLines {
             score: 0,
             reasons: Vec::new(),
         };
-        if head.len() < INDEX_HEAD_LINES {
-            head.push(line);
-        } else {
-            if tail.len() == INDEX_TAIL_LINES {
-                tail.pop_front();
-            }
-            tail.push_back(line);
+        if timeline.len() < MAX_CAPTURE_LINES {
+            timeline.push(line);
         }
     }
-    let truncated = total > MAX_INDEXED_LINES;
-    head.extend(tail);
     CollectedLines {
-        timeline: head,
+        timeline,
         total,
         stdout,
         stderr,
-        truncated,
+        truncated: false,
+        exceeded_limit: total > MAX_CAPTURE_LINES,
     }
 }
 

@@ -6,6 +6,46 @@ pub const MAX_DISPLAY_READ_BYTES: u64 = 64 * 1024;
 pub const MAX_SEARCH_LINE_BYTES: u64 = 8 * 1024 * 1024;
 const DISPLAY_CLIP_BYTES: usize = 1200;
 
+pub struct BoundedStdout {
+    remaining: usize,
+    truncated: bool,
+}
+
+impl BoundedStdout {
+    pub fn new(maximum_bytes: usize) -> Self {
+        Self {
+            remaining: maximum_bytes,
+            truncated: false,
+        }
+    }
+
+    pub fn line(&mut self, text: &str) -> Result<(), String> {
+        if self.truncated {
+            return Ok(());
+        }
+        let clean = sanitize_terminal(text);
+        let needed = clean.len().saturating_add(1);
+        if needed <= self.remaining {
+            stdout_line(&clean)?;
+            self.remaining -= needed;
+            return Ok(());
+        }
+        const MARKER: &str = "[pira_ctx output truncated by byte limit]";
+        let marker_needed = MARKER.len() + 1;
+        let available = self.remaining.saturating_sub(marker_needed + 1);
+        if available > 0 {
+            stdout_line(safe_prefix(&clean, available))?;
+            self.remaining = self.remaining.saturating_sub(available + 1);
+        }
+        if marker_needed <= self.remaining {
+            stdout_line(MARKER)?;
+        }
+        self.remaining = 0;
+        self.truncated = true;
+        Ok(())
+    }
+}
+
 pub fn io_error(error: io::Error) -> String {
     if error.kind() == io::ErrorKind::BrokenPipe {
         BROKEN_PIPE.to_string()
@@ -113,6 +153,32 @@ pub fn clip_display(value: &str) -> String {
         "{start} … clipped {clipped} bytes (~{} words) … {end}",
         clipped / 6
     )
+}
+
+pub fn single_line_clip(value: &str, maximum_bytes: usize) -> String {
+    let clean = sanitize_terminal(value)
+        .chars()
+        .map(|character| {
+            if matches!(character, '\n' | '\r' | '\t') {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect::<String>();
+    let clean = clean.split_whitespace().collect::<Vec<_>>().join(" ");
+    if clean.len() <= maximum_bytes {
+        clean
+    } else {
+        format!("{}…", safe_prefix(&clean, maximum_bytes.saturating_sub(3)))
+    }
+}
+
+pub fn xml_field(value: &str, maximum_bytes: usize) -> String {
+    single_line_clip(value, maximum_bytes)
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 fn safe_prefix(value: &str, bytes: usize) -> &str {

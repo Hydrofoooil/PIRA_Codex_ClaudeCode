@@ -97,6 +97,8 @@ The script asks before sensitive choices in interactive mode. For unattended set
 | `--global-agents link\|copy\|skip\|ask` | Controls whether `~/.codex/AGENTS.md` points to PIRA by symlink, copy, or not at all. |
 | `--legacy remove\|keep\|ask` | Controls paths listed in `assets/LEGACY_LIST.md`; `remove` moves active legacy files into `.backup/setup_pira_legacy/`. |
 | `--agent-dir PATH` | Installs against a path other than `~/agent`. |
+| `--skip-tools` | Skips installation or refresh of bundled native PIRA tools. |
+| `--tools-install-dir PATH` | Overrides the per-user tools directory (`~/.local/bin` on macOS/Linux or `%LOCALAPPDATA%\PIRA\bin` on Windows). |
 | `--verify` | Checks the current setup without writing. |
 | `--dry-run` | Prints planned changes without applying them. |
 
@@ -109,8 +111,16 @@ The setup script:
 3. Moves legacy files listed in `assets/LEGACY_LIST.md` into `.backup/setup_pira_legacy/` when approved.
 4. Updates or creates Codex `config.toml` so the selected agent directory's `AGENTS.md` is loaded, with `project_doc_max_bytes = 65536`.
 5. Optionally links or copies `~/.codex/AGENTS.md` for Codex's global AGENTS discovery path.
-6. Optionally delegates audio setup to the platform-specific audio helper.
-7. Verifies the setup, including the PIRA verification token.
+6. Selects and verifies the bundled native tool for the current platform, then installs or refreshes it in a per-user PATH directory. Existing stale copies are atomically replaced; matching copies are left unchanged.
+7. Optionally delegates audio setup to the platform-specific audio helper.
+8. Verifies the setup, including the PIRA verification token and installed native tool.
+
+Tool setup can also be run independently:
+
+```bash
+python3 assets/scripts/setup_pira_tools.py
+python3 assets/scripts/setup_pira_tools.py --verify
+```
 
 If setup cannot safely handle an existing conflicting file or Codex setting, it stops or skips that action with a warning instead of silently overwriting it.
 

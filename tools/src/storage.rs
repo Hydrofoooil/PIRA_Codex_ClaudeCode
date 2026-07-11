@@ -7,7 +7,9 @@ use std::time::{Duration, SystemTime};
 
 use sha2::{Digest, Sha256};
 
-use crate::model::{CaptureResult, ListedEntry, Metadata, StreamKind, StreamReaders};
+use crate::model::{
+    BlockDescriptor, CaptureResult, ListedEntry, Metadata, StreamKind, StreamReaders,
+};
 use crate::{summarize, util};
 
 #[cfg(unix)]
@@ -15,9 +17,15 @@ use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 const MAGIC_V1: &[u8; 8] = b"PIRACTX1";
 const MAGIC_V2: &[u8; 8] = b"PIRACTX2";
-const FORMAT_VERSION: u32 = 2;
+const MAGIC_V3: &[u8; 8] = b"PIRACTX3";
+const FORMAT_VERSION: u32 = 3;
 const HEADER_V2_BYTES: u64 = 8 + 4 + 4 + 8 + 8 + 8 + 32 + 32 + 32;
+const HEADER_V3_BYTES: u64 = 8 + 4 + 4 + 8 * 6 + 32 * 4;
 const MAX_METADATA_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_INDEX_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_BLOCK_TABLE_BYTES: u64 = 64 * 1024 * 1024;
+const BLOCK_BYTES: u64 = 256 * 1024;
+const FLAG_AUTHENTICATED_TABLES: u32 = 1;
 const INDEX_COMPLETE: &str = ".complete-v2";
 
 #[derive(Debug)]
@@ -29,10 +37,23 @@ pub struct StoredResult {
     stderr_offset: u64,
     stdout_hash: Option<[u8; 32]>,
     stderr_hash: Option<[u8; 32]>,
+    stdout_blocks: Option<Vec<BlockDescriptor>>,
+    stderr_blocks: Option<Vec<BlockDescriptor>>,
 }
 
 impl StoredResult {
     pub fn reader(&self) -> Result<StreamReaders, String> {
+        if let (Some(stdout), Some(stderr)) = (&self.stdout_blocks, &self.stderr_blocks) {
+            return StreamReaders::from_blocks(
+                &self.path,
+                self.stdout_offset,
+                self.metadata.stdout_bytes,
+                stdout.clone(),
+                self.stderr_offset,
+                self.metadata.stderr_bytes,
+                stderr.clone(),
+            );
+        }
         StreamReaders::from_paths(
             &self.path,
             self.stdout_offset,
@@ -44,6 +65,21 @@ impl StoredResult {
     }
 
     pub fn verify(&self) -> Result<(), String> {
+        if self.stdout_blocks.is_some() {
+            let mut readers = self.reader()?;
+            let mut stdout = HashSink(Sha256::new());
+            let mut stderr = HashSink(Sha256::new());
+            readers.copy_section(StreamKind::Stdout, &mut stdout)?;
+            readers.copy_section(StreamKind::Stderr, &mut stderr)?;
+            let actual_stdout: [u8; 32] = stdout.0.finalize().into();
+            let actual_stderr: [u8; 32] = stderr.0.finalize().into();
+            if self.stdout_hash.is_some_and(|h| h != actual_stdout)
+                || self.stderr_hash.is_some_and(|h| h != actual_stderr)
+            {
+                return Err("corrupt result: stream checksum mismatch".into());
+            }
+            return Ok(());
+        }
         if let Some(expected) = self.stdout_hash {
             verify_section(
                 &self.path,
@@ -62,6 +98,17 @@ impl StoredResult {
                 "stderr",
             )?;
         }
+        Ok(())
+    }
+}
+
+struct HashSink(Sha256);
+impl Write for HashSink {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0.update(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> io::Result<()> {
         Ok(())
     }
 }
@@ -193,11 +240,24 @@ fn write_container(
     metadata: &Metadata,
     capture: &CaptureResult,
 ) -> Result<(), String> {
-    let metadata_bytes = serde_json::to_vec(metadata).map_err(|error| error.to_string())?;
+    let mut compact_metadata = metadata.clone();
+    compact_metadata.line_timeline.clear();
+    let metadata_bytes =
+        serde_json::to_vec(&compact_metadata).map_err(|error| error.to_string())?;
+    let line_index = encode_line_index(&capture.timeline)?;
+    let (stdout_table, stdout_payload, stdout_stored) =
+        encode_block_stream(&capture.stdout.path, "stdout")?;
+    let (stderr_table, stderr_payload, stderr_stored) =
+        encode_block_stream(&capture.stderr.path, "stderr")?;
     if metadata_bytes.len() as u64 > MAX_METADATA_BYTES {
         return Err("capture metadata is too large to store safely".to_string());
     }
     let metadata_hash: [u8; 32] = Sha256::digest(&metadata_bytes).into();
+    let mut index_hasher = Sha256::new();
+    index_hasher.update(&line_index);
+    index_hasher.update(&stdout_table);
+    index_hasher.update(&stderr_table);
+    let line_index_hash: [u8; 32] = index_hasher.finalize().into();
     let temporary = path.with_extension(format!("piractx.tmp-{}", std::process::id()));
     let result = (|| {
         let mut options = OpenOptions::new();
@@ -208,19 +268,29 @@ fn write_container(
             .open(&temporary)
             .map_err(|error| format!("create {}: {error}", temporary.display()))?;
         output
-            .write_all(MAGIC_V2)
+            .write_all(MAGIC_V3)
             .map_err(|error| error.to_string())?;
         output
             .write_all(&FORMAT_VERSION.to_le_bytes())
             .map_err(|error| error.to_string())?;
         output
-            .write_all(&0_u32.to_le_bytes())
+            .write_all(&FLAG_AUTHENTICATED_TABLES.to_le_bytes())
             .map_err(|error| error.to_string())?;
-        write_u64(&mut output, metadata_bytes.len() as u64)?;
-        write_u64(&mut output, capture.stdout.length)?;
-        write_u64(&mut output, capture.stderr.length)?;
+        for length in [
+            metadata_bytes.len() as u64,
+            line_index.len() as u64,
+            stdout_table.len() as u64,
+            stderr_table.len() as u64,
+            stdout_stored,
+            stderr_stored,
+        ] {
+            write_u64(&mut output, length)?;
+        }
         output
             .write_all(&metadata_hash)
+            .map_err(|error| error.to_string())?;
+        output
+            .write_all(&line_index_hash)
             .map_err(|error| error.to_string())?;
         output
             .write_all(&capture.stdout.sha256)
@@ -231,8 +301,17 @@ fn write_container(
         output
             .write_all(&metadata_bytes)
             .map_err(|error| error.to_string())?;
-        copy_file(&capture.stdout.path, &mut output)?;
-        copy_file(&capture.stderr.path, &mut output)?;
+        output
+            .write_all(&line_index)
+            .map_err(|error| error.to_string())?;
+        output
+            .write_all(&stdout_table)
+            .map_err(|error| error.to_string())?;
+        output
+            .write_all(&stderr_table)
+            .map_err(|error| error.to_string())?;
+        copy_file(&stdout_payload, &mut output)?;
+        copy_file(&stderr_payload, &mut output)?;
         output.sync_all().map_err(|error| error.to_string())?;
         match fs::hard_link(&temporary, path) {
             Ok(()) => {
@@ -251,6 +330,8 @@ fn write_container(
     if result.is_err() {
         let _ = fs::remove_file(&temporary);
     }
+    let _ = fs::remove_file(stdout_payload);
+    let _ = fs::remove_file(stderr_payload);
     result
 }
 
@@ -269,13 +350,308 @@ pub fn read_result_path(path: &Path) -> Result<StoredResult, String> {
     match &magic {
         MAGIC_V1 => read_v1(path, file, file_length),
         MAGIC_V2 => read_v2(path, file, file_length),
+        MAGIC_V3 => read_v3(path, file, file_length),
         _ => Err("corrupt result: bad magic".to_string()),
     }
 }
 
+fn encode_line_index(lines: &[crate::model::LineMeta]) -> Result<Vec<u8>, String> {
+    let mut out = Vec::with_capacity(8 + lines.len().saturating_mul(17));
+    out.extend_from_slice(&(lines.len() as u64).to_le_bytes());
+    let mut previous = [0_u64; 2];
+    for line in lines {
+        let stream = match line.stream {
+            StreamKind::Stdout => 0_u8,
+            StreamKind::Stderr => 1_u8,
+        };
+        out.push(stream);
+        let slot = stream as usize;
+        let delta = line
+            .offset
+            .checked_sub(previous[slot])
+            .ok_or("non-monotonic line offset")?;
+        put_varint(&mut out, delta);
+        put_varint(&mut out, line.length);
+        previous[slot] = line.offset;
+    }
+    Ok(out)
+}
+
+fn decode_line_index(
+    bytes: &[u8],
+    stdout: u64,
+    stderr: u64,
+) -> Result<Vec<crate::model::LineMeta>, String> {
+    if bytes.len() < 8 {
+        return Err("corrupt line index".into());
+    }
+    let count = u64::from_le_bytes(bytes[..8].try_into().unwrap());
+    let count = usize::try_from(count).map_err(|_| "line index too large")?;
+    let maximum_count = bytes.len().saturating_sub(8) / 3;
+    if count > maximum_count {
+        return Err("corrupt line index: impossible line count".into());
+    }
+    let mut position = 8_usize;
+    let mut previous = [0_u64; 2];
+    let mut lines = Vec::with_capacity(count.min(1_000_000));
+    for index in 0..count {
+        let stream_byte = *bytes.get(position).ok_or("truncated line index")?;
+        position += 1;
+        let stream = match stream_byte {
+            0 => StreamKind::Stdout,
+            1 => StreamKind::Stderr,
+            _ => return Err("invalid line-index stream".into()),
+        };
+        let slot = stream_byte as usize;
+        let delta = get_varint(bytes, &mut position)?;
+        let length = get_varint(bytes, &mut position)?;
+        let offset = previous[slot]
+            .checked_add(delta)
+            .ok_or("line-index offset overflow")?;
+        let section = if slot == 0 { stdout } else { stderr };
+        if offset.checked_add(length).is_none_or(|end| end > section) {
+            return Err("line index exceeds stream".into());
+        }
+        previous[slot] = offset;
+        lines.push(crate::model::LineMeta {
+            line: index + 1,
+            stream,
+            offset,
+            length,
+            score: 0,
+            reasons: vec![],
+        });
+    }
+    if position != bytes.len() {
+        return Err("trailing bytes in line index".into());
+    }
+    Ok(lines)
+}
+
+fn put_varint(out: &mut Vec<u8>, mut value: u64) {
+    while value >= 0x80 {
+        out.push((value as u8) | 0x80);
+        value >>= 7;
+    }
+    out.push(value as u8);
+}
+fn get_varint(bytes: &[u8], position: &mut usize) -> Result<u64, String> {
+    let mut value = 0_u64;
+    for shift in (0..=63).step_by(7) {
+        let byte = *bytes.get(*position).ok_or("truncated varint")?;
+        *position += 1;
+        value |= u64::from(byte & 0x7f) << shift;
+        if byte & 0x80 == 0 {
+            return Ok(value);
+        }
+    }
+    Err("oversized varint".into())
+}
+
+fn encode_block_stream(path: &Path, label: &str) -> Result<(Vec<u8>, PathBuf, u64), String> {
+    const BLOCK: usize = BLOCK_BYTES as usize;
+    let temp =
+        std::env::temp_dir().join(format!(".pira_ctx-blocks-{}-{label}", std::process::id()));
+    let mut options = OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut output = options.open(&temp).map_err(|e| e.to_string())?;
+    let mut input = File::open(path).map_err(|e| e.to_string())?;
+    let mut descriptors = Vec::new();
+    let mut logical = 0_u64;
+    let mut payload = 0_u64;
+    let mut buffer = vec![0_u8; BLOCK];
+    loop {
+        let count = input.read(&mut buffer).map_err(|e| e.to_string())?;
+        if count == 0 {
+            break;
+        }
+        let compressed = lz4_flex::block::compress(&buffer[..count]);
+        let (codec, bytes) = if compressed.len() * 100 <= count * 95 {
+            (1_u8, compressed)
+        } else {
+            (0_u8, buffer[..count].to_vec())
+        };
+        output.write_all(&bytes).map_err(|e| e.to_string())?;
+        descriptors.push(BlockDescriptor {
+            codec,
+            logical_offset: logical,
+            uncompressed_length: count as u64,
+            stored_length: bytes.len() as u64,
+            payload_offset: payload,
+        });
+        logical += count as u64;
+        payload += bytes.len() as u64;
+    }
+    output.sync_all().map_err(|e| e.to_string())?;
+    Ok((encode_block_table(&descriptors), temp, payload))
+}
+fn encode_block_table(blocks: &[BlockDescriptor]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(8 + blocks.len() * 40);
+    out.extend_from_slice(&(blocks.len() as u64).to_le_bytes());
+    for b in blocks {
+        out.push(b.codec);
+        out.extend_from_slice(&[0; 7]);
+        for v in [
+            b.logical_offset,
+            b.uncompressed_length,
+            b.stored_length,
+            b.payload_offset,
+        ] {
+            out.extend_from_slice(&v.to_le_bytes())
+        }
+    }
+    out
+}
+fn decode_block_table(
+    bytes: &[u8],
+    logical_length: u64,
+    payload_length: u64,
+) -> Result<Vec<BlockDescriptor>, String> {
+    if bytes.len() < 8 {
+        return Err("corrupt block table".into());
+    }
+    let raw_count = u64::from_le_bytes(bytes[..8].try_into().unwrap());
+    let count = usize::try_from(raw_count).map_err(|_| "block table too large")?;
+    if bytes.len() != 8 + count.checked_mul(40).ok_or("block table overflow")? {
+        return Err("corrupt block table length".into());
+    }
+    let mut blocks = Vec::with_capacity(count);
+    let mut p = 8;
+    let mut logical = 0;
+    let mut payload = 0;
+    for _ in 0..count {
+        let codec = bytes[p];
+        if codec > 1 {
+            return Err("unsupported block codec".into());
+        }
+        p += 8;
+        let mut values = [0_u64; 4];
+        for value in &mut values {
+            *value = u64::from_le_bytes(bytes[p..p + 8].try_into().unwrap());
+            p += 8
+        }
+        let b = BlockDescriptor {
+            codec,
+            logical_offset: values[0],
+            uncompressed_length: values[1],
+            stored_length: values[2],
+            payload_offset: values[3],
+        };
+        if b.logical_offset != logical
+            || b.payload_offset != payload
+            || b.uncompressed_length == 0
+            || b.uncompressed_length > BLOCK_BYTES
+            || b.stored_length == 0
+            || (b.codec == 0 && b.stored_length != b.uncompressed_length)
+            || (b.codec == 1 && b.stored_length >= b.uncompressed_length)
+        {
+            return Err("non-contiguous block table".into());
+        }
+        logical = logical
+            .checked_add(b.uncompressed_length)
+            .ok_or("block overflow")?;
+        payload = payload
+            .checked_add(b.stored_length)
+            .ok_or("block overflow")?;
+        blocks.push(b)
+    }
+    if logical != logical_length || payload != payload_length {
+        return Err("block table totals disagree".into());
+    }
+    Ok(blocks)
+}
+
+fn read_v3(path: &Path, mut file: File, file_length: u64) -> Result<StoredResult, String> {
+    let version = read_u32(&mut file)?;
+    if version != 3 {
+        return Err(format!("unsupported pira_ctx format version {version}"));
+    }
+    let flags = read_u32(&mut file)?;
+    if flags & !FLAG_AUTHENTICATED_TABLES != 0 {
+        return Err("unsupported PIRACTX3 flags".into());
+    }
+    let metadata_length = read_u64(&mut file)?;
+    let index_length = read_u64(&mut file)?;
+    let stdout_table_length = read_u64(&mut file)?;
+    let stderr_table_length = read_u64(&mut file)?;
+    let stdout_length = read_u64(&mut file)?;
+    let stderr_length = read_u64(&mut file)?;
+    let metadata_hash = read_hash(&mut file)?;
+    let index_hash = read_hash(&mut file)?;
+    let stdout_hash = read_hash(&mut file)?;
+    let stderr_hash = read_hash(&mut file)?;
+    let expected = HEADER_V3_BYTES
+        .checked_add(metadata_length)
+        .and_then(|v| v.checked_add(index_length))
+        .and_then(|v| v.checked_add(stdout_table_length))
+        .and_then(|v| v.checked_add(stderr_table_length))
+        .and_then(|v| v.checked_add(stdout_length))
+        .and_then(|v| v.checked_add(stderr_length))
+        .ok_or("capture length overflow")?;
+    if expected != file_length
+        || metadata_length > MAX_METADATA_BYTES
+        || index_length > MAX_INDEX_BYTES
+        || stdout_table_length > MAX_BLOCK_TABLE_BYTES
+        || stderr_table_length > MAX_BLOCK_TABLE_BYTES
+    {
+        return Err("corrupt result: inconsistent PIRACTX3 sections".into());
+    }
+    let metadata_bytes = read_bounded_metadata(&mut file, metadata_length)?;
+    let index_bytes = read_bounded_metadata(&mut file, index_length)?;
+    let stdout_table = read_bounded_metadata(&mut file, stdout_table_length)?;
+    let stderr_table = read_bounded_metadata(&mut file, stderr_table_length)?;
+    let actual_metadata_hash: [u8; 32] = Sha256::digest(&metadata_bytes).into();
+    let actual_index_hash: [u8; 32] = if flags & FLAG_AUTHENTICATED_TABLES != 0 {
+        let mut hasher = Sha256::new();
+        hasher.update(&index_bytes);
+        hasher.update(&stdout_table);
+        hasher.update(&stderr_table);
+        hasher.finalize().into()
+    } else {
+        Sha256::digest(&index_bytes).into()
+    };
+    if actual_metadata_hash != metadata_hash || actual_index_hash != index_hash {
+        return Err("corrupt result: metadata/index checksum mismatch".into());
+    }
+    let mut metadata: Metadata = serde_json::from_slice(&metadata_bytes)
+        .map_err(|e| format!("invalid result metadata: {e}"))?;
+    if metadata.compat_version != 3 {
+        return Err("unsupported metadata compatibility version".into());
+    }
+    let stdout_blocks = decode_block_table(&stdout_table, metadata.stdout_bytes, stdout_length)?;
+    let stderr_blocks = decode_block_table(&stderr_table, metadata.stderr_bytes, stderr_length)?;
+    metadata.line_timeline =
+        decode_line_index(&index_bytes, metadata.stdout_bytes, metadata.stderr_bytes)?;
+    metadata.timeline_truncated = false;
+    validate_metadata(&metadata, metadata.stdout_bytes, metadata.stderr_bytes)?;
+    if metadata.stdout_sha256 != util::hex(&stdout_hash)
+        || metadata.stderr_sha256 != util::hex(&stderr_hash)
+    {
+        return Err("corrupt result: stream hashes disagree".into());
+    }
+    let stdout_offset = HEADER_V3_BYTES
+        + metadata_length
+        + index_length
+        + stdout_table_length
+        + stderr_table_length;
+    Ok(StoredResult {
+        metadata,
+        path: path.to_path_buf(),
+        format_version: 3,
+        stdout_offset,
+        stderr_offset: stdout_offset + stdout_length,
+        stdout_hash: Some(stdout_hash),
+        stderr_hash: Some(stderr_hash),
+        stdout_blocks: Some(stdout_blocks),
+        stderr_blocks: Some(stderr_blocks),
+    })
+}
+
 fn read_v2(path: &Path, mut file: File, file_length: u64) -> Result<StoredResult, String> {
     let version = read_u32(&mut file)?;
-    if version != FORMAT_VERSION {
+    if version != 2 {
         return Err(format!("unsupported pira_ctx format version {version}"));
     }
     let _flags = read_u32(&mut file)?;
@@ -299,7 +675,7 @@ fn read_v2(path: &Path, mut file: File, file_length: u64) -> Result<StoredResult
     }
     let metadata: Metadata = serde_json::from_slice(&metadata_bytes)
         .map_err(|error| format!("invalid result metadata: {error}"))?;
-    if metadata.compat_version != FORMAT_VERSION {
+    if metadata.compat_version != 2 {
         return Err(format!(
             "unsupported metadata compatibility version {}",
             metadata.compat_version
@@ -320,6 +696,8 @@ fn read_v2(path: &Path, mut file: File, file_length: u64) -> Result<StoredResult
         stderr_offset: stdout_offset + stdout_length,
         stdout_hash: Some(stdout_hash),
         stderr_hash: Some(stderr_hash),
+        stdout_blocks: None,
+        stderr_blocks: None,
     })
 }
 
@@ -364,6 +742,8 @@ fn read_v1(path: &Path, mut file: File, file_length: u64) -> Result<StoredResult
         stderr_offset,
         stdout_hash: None,
         stderr_hash: None,
+        stdout_blocks: None,
+        stderr_blocks: None,
     })
 }
 
@@ -863,4 +1243,43 @@ fn civil_from_days(days_since_epoch: i64) -> (i32, u32, u32) {
         month as u32,
         day as u32,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn line_index_rejects_impossible_count_and_oversized_varint() {
+        let mut impossible = 2_u64.to_le_bytes().to_vec();
+        impossible.extend_from_slice(&[0, 0, 1]);
+        assert!(decode_line_index(&impossible, 1, 0).is_err());
+
+        let mut oversized = 1_u64.to_le_bytes().to_vec();
+        oversized.push(0);
+        oversized.extend_from_slice(&[0x80; 10]);
+        oversized.push(0);
+        assert!(decode_line_index(&oversized, 1, 0).is_err());
+    }
+
+    #[test]
+    fn block_table_rejects_oversized_and_inconsistent_blocks() {
+        let oversized = encode_block_table(&[BlockDescriptor {
+            codec: 0,
+            logical_offset: 0,
+            uncompressed_length: BLOCK_BYTES + 1,
+            stored_length: BLOCK_BYTES + 1,
+            payload_offset: 0,
+        }]);
+        assert!(decode_block_table(&oversized, BLOCK_BYTES + 1, BLOCK_BYTES + 1).is_err());
+
+        let bad_raw = encode_block_table(&[BlockDescriptor {
+            codec: 0,
+            logical_offset: 0,
+            uncompressed_length: 8,
+            stored_length: 4,
+            payload_offset: 0,
+        }]);
+        assert!(decode_block_table(&bad_raw, 8, 4).is_err());
+    }
 }

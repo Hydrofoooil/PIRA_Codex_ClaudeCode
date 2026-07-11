@@ -507,6 +507,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--agent-dir", default="~/agent", help="Global PIRA path to configure (default: ~/agent).")
     parser.add_argument("--codex-config", default="~/.codex/config.toml", help="Codex config.toml path.")
     parser.add_argument("--skip-codex", action="store_true", help="Do not edit Codex configuration.")
+    parser.add_argument("--skip-tools", action="store_true", help="Do not install or refresh bundled PIRA tools.")
+    parser.add_argument("--tools-install-dir", default=None, help="Override the per-user PIRA tools PATH directory.")
     parser.add_argument("--execution-mode", choices=["ask", "safe", "soft-safe", "keep"], default="ask")
     parser.add_argument("--replace-permissions", action="store_true", help="Remove top-level default_permissions when setting sandbox_mode.")
     parser.add_argument("--global-agents", choices=["ask", "link", "copy", "skip"], default="ask", help="How to handle ~/.codex/AGENTS.md.")
@@ -520,6 +522,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dry-run", action="store_true", help="Print planned changes without writing.")
     parser.add_argument("--yes", action="store_true", help="Assume yes for setup confirmations; does not enable audio unless --audio yes is set.")
     return parser
+
+
+def configure_tools(state: SetupState, install_dir: str | None, *, verify_only: bool) -> None:
+    script = state.repo_root / "assets" / "scripts" / "setup_pira_tools.py"
+    if not script.is_file():
+        raise RuntimeError(f"PIRA tools setup script is missing: {script}")
+    command = [sys.executable, str(script)]
+    if install_dir:
+        command.extend(["--install-dir", str(expand_path(install_dir))])
+    if verify_only:
+        command.append("--verify")
+    elif state.dry_run:
+        command.append("--dry-run")
+    subprocess.run(command, check=True)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -542,10 +558,14 @@ def main(argv: list[str] | None = None) -> int:
             if not args.skip_codex:
                 configure_codex(state, config_path, args.execution_mode, args.global_agents, args.replace_permissions)
             configure_audio(state, args.audio, config_path, audio_dir, args.force_audio)
+            if not args.skip_tools:
+                configure_tools(state, args.tools_install_dir, verify_only=False)
         if args.dry_run and not args.verify:
             print("DRY-RUN: verification skipped because planned changes were not applied")
         else:
             verify(state, config_path, skip_codex=args.skip_codex)
+            if args.verify and not args.skip_tools:
+                configure_tools(state, args.tools_install_dir, verify_only=True)
     except (RuntimeError, subprocess.CalledProcessError, OSError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1

@@ -18,15 +18,17 @@ __pycache__/
 # Private local tool planning
 tool_todo.md
 
-# Public pira_ctx source and universal release bundles stay visible.
-# The platform-selected canonical runtime is generated during setup.
-tools/bin/pira_ctx/
+# Keep only the public pira_ctx build inputs, selector, source, and release
+# bundles. Setup scripts live under assets/scripts/ and remain public.
+tools/*
+!tools/Cargo.toml
+!tools/Cargo.lock
+!tools/select_tool_for_platform.py
+!tools/src/
+!tools/src/**
+!tools/dist/
+!tools/dist/**
 
-# Ignore local caches, captures, and dev-only tests/plans.
-tools/target/
-tools/pira_ctx_plan.md
-tools/tests/
+# Local captures may be created outside the tool tree.
 *.piractx
 /pira_ctx/
-
-tools/build/
