@@ -142,50 +142,69 @@ Explicit `exact` mode streams unchanged when attached to a terminal. In non-inte
 
 Setup installs a verified native executable in the user's `PATH`. Normal use requires no Python, Rust toolchain, daemon, database, network service, or model call. Captures are private user-cache files with independently compressed blocks and integrity hashes. `pira_ctx` preserves the caller's permissions and does not sandbox commands. Run `pira_ctx --help` for the complete interface. The Rust source is under `tools/src`, and verified builds for macOS arm64/x64, Linux arm64/x64, and Windows x64 are under `tools/dist/pira_ctx`.
 
-### Prospective held-out benchmark
+### Comprehensive held-out benchmark
 
-The current `pira_ctx 0.5.2` source and release artifacts were frozen before collecting **43 new outputs from ten fixed public repositories**. The corpus was collected, sanitized, deduplicated against earlier private corpora, and evaluated once without subsequent implementation or threshold tuning. Every retained response was at least 2 KiB and entered full automatic-summary mode.
+The current `pira_ctx 0.5.2` source and release artifacts were frozen before collecting or importing held-out output. The final benchmark caps each category at five cases and contains **45 sanitized responses across ten categories**:
 
-| Mode on the same 3,436,926 raw bytes | Returned context | Complete stored state | Median overhead | Immediate changed-file visibility |
+| Suite | Cases | Holdout source |
+|---|---:|---|
+| Public-repository core | 25 | New outputs generated after the freeze from ten fixed Rust repositories |
+| Remote status workloads | 15 | Previously unseen Codex outputs streamed from a remote machine after the freeze |
+| arXiv LaTeX supplement | 5 | Isolated builds of seeded recent arXiv papers, including natural and controlled failures |
+
+The remote importer scanned raw logs in memory and persisted only fixed-point sanitized, privacy-audited fixtures; unsanitized server output was not written locally. Final selection is independent of PIRA output: SHA-256 order with a five-case cap, while build and test categories prefer three successes and two failures. No implementation, heuristic, or threshold was changed after collection or evaluation.
+
+| PIRA mode on 2,248,456 raw bytes | Returned context | Complete stored state | Median overhead |
+|---|---:|---:|---:|
+| Automatic synopsis | 47,400 B (97.9% reduction) | 560,998 B (75.0% reduction) | +13.4 ms |
+| `check` | 3,064 B (99.9% reduction) | 561,133 B (75.0% reduction) | +12.7 ms |
+
+All 45 cases preserved child status and entered full automatic-summary mode; their one-shot suite evaluations also reconstructed every sanitized output exactly and passed integrity verification. Suggestions correctly abstained in 32/32 successful unlabeled cases. Failure-marker visibility was 7/8 across build, test, and LaTeX failures. Changed-filename recall was 0/5 in the capped diff subset, exposing a separate suggestion weakness that was not tuned against the holdout.
+
+<details>
+<summary>Benchmark method, category results, Context Mode comparison, and limitations</summary>
+
+#### Corpus and evaluation protocol
+
+The prospective public core covers VCS patches, largest tracked Rust files, recursive declaration listings, 40-commit terminal logs, and GitHub pull-list responses. Exact and structural duplicates against earlier private corpora were excluded. Public changed basenames were preserved as sanitized metadata so suggestion labels remained observable. Five cases per category were selected by content SHA-256, producing 25 core cases.
+
+The remote extension was fixed before inspecting output content. It reconstructed completed `exec_command` and `write_stdin` sessions from 2.73 GB of authorized Codex logs, streamed 683 category candidates through an in-memory sanitizer, retained 289 eligible unique responses, and selected cases by outcome, size bucket, session diversity, and content hash. The final five-case cap retained three successful and two failed builds, three successful and two failed tests, four setup/install responses, and one static-analysis response. The server contained no LaTeX response above the 2 KiB threshold.
+
+LaTeX coverage therefore uses arXiv sources compiled inside the retained Docker Sandbox with TeX Live and shell escape disabled. Candidate papers came from a binary-seeded shuffle of the recent `cs.LG` API pool. Repeated transport interruptions caused the live recent-entry pool to drift, so the five already downloaded public identifiers were frozen before corpus persistence or PIRA evaluation. One paper compiled successfully; its fresh source also produced a controlled undefined-command failure. Three additional papers contributed natural compilation failures, yielding one pass and four failures. Raw paper sources were disposable and were not committed.
+
+Each suite was evaluated once for output quality, exact reconstruction, and integrity. The visible aggregate performance figures come from a subsequent no-tuning replay of the selected 45 fixtures through one persistent automatic store and one persistent `check` store. Every call used an identical raw fixture-emitter baseline; overhead is `wrapped wall time - raw-operation wall time`, summarized by the per-case median. Stored state includes captures, indexes, and event history but excludes installed binaries and runtimes.
+
+| Held-out category | Cases | Outcomes | Immediate quality | Context reduction |
+|---|---:|---:|---:|---:|
+| File reads | 5 | 5 success | 5/5 abstentions | 99.2% |
+| GitHub pull retrieval | 5 | 5 success | 5/5 abstentions | 99.4% |
+| Search and listing | 5 | 5 success | 5/5 abstentions | 98.7% |
+| Terminal logs | 5 | 5 success | 5/5 abstentions | 95.7% |
+| Version-control diffs | 5 | 5 success | 0/5 changed basenames | 89.8% |
+| Builds | 5 | 3 success, 2 failure | 3/3 abstentions; 2/2 markers | 75.2% |
+| Test runs | 5 | 3 success, 2 failure | 3/3 abstentions; 2/2 markers | 85.6% |
+| Setup and installation | 4 | 4 success | 4/4 abstentions | 77.3% |
+| Static analysis | 1 | 1 success | 1/1 abstention | 93.4% |
+| LaTeX compilation | 5 | 1 success, 4 failure | 1/1 abstention; 3/4 markers | 94.5% |
+
+#### Context Mode comparison on the prospective core
+
+Context Mode 1.0.169 was installed inside the retained Docker Sandbox and run without errors on the original 43 prospective-core fixtures, with one persistent server per mode. It was not rerun on the remote or arXiv extensions, and the table predates the later five-case category cap; it is therefore a separate same-corpus comparison rather than part of the 45-case aggregate.
+
+| Core-corpus mode | Returned context | Complete stored state | Median overhead | Immediate changed-file visibility |
 |---|---:|---:|---:|---:|
 | `pira_ctx` automatic synopsis | 40,272 B (98.8% reduction) | 724,318 B (78.9% reduction) | +15.0 ms | 1/8 |
 | Context Mode generic passthrough | 44,835 B (98.7% reduction) | 23,437,772 B (581.9% overhead) | +26.5 ms | 3/8 |
 | `pira_ctx check` | 2,924 B (99.9% reduction) | 724,447 B (78.9% reduction) | +14.0 ms | N/A—status only |
 | Context Mode `ctx_index` receipt | 7,323 B (99.8% reduction) | 18,436,546 B (436.4% overhead) | N/A—no corresponding raw baseline | 0/8 |
 
-All 43 PIRA captures preserved child status, reconstructed the exact sanitized stdout, and passed integrity verification. Automatic suggestions correctly abstained in 35/35 unlabeled cases, but changed-filename recall was only 1/8. This is a current generalization weakness, deliberately reported without tuning it against the held-out corpus.
+Generic passthrough used `ctx_execute_file` to print each fixture unchanged with the same category-level intent as PIRA. Its direct Node emitter provided its own raw baseline, excluding Docker startup and server initialization. `ctx_index` has no equivalent raw indexing operation, so no synthetic overhead is reported.
 
-<details>
-<summary>Benchmark method, category results, comparison scope, and limitations</summary>
-
-#### Corpus and PIRA protocol
-
-The five categories use recent public VCS patches, largest tracked Rust files, recursive declaration listings, 40-commit terminal logs, and GitHub pull-list responses. Candidate outputs were generated only after the binary and source freeze. Fixed-point sanitation removed private values and paths; exact and structural duplicates against 226 earlier private cases were rejected. Public changed basenames were preserved as explicit sanitized diff metadata so the predeclared suggestion labels remained observable.
-
-A preceding candidate collection was not reported after audit found that sanitation had replaced every changed-filename label with a generic placeholder. The implementation was not changed after seeing that invalid measurement. The final protocol fixed the label-preservation rule and repository list before collecting an entirely new corpus.
-
-Automatic and `check` modes used one persistent store each. Every call was compared with the identical raw fixture-emitter command. Overhead is `wrapped wall time - raw-operation wall time`, summarized by the per-case median. Complete stored state includes captures, indexes, and event history after all calls; installed binaries and build/runtime dependencies are excluded.
-
-| Held-out category | Cases | Changed-basename recall | Correct abstentions | Context reduction |
-|---|---:|---:|---:|---:|
-| File reads | 9 | — | 9/9 | 98.8% |
-| GitHub pull retrieval | 8 | — | 8/8 | 99.4% |
-| Search and listing | 9 | — | 9/9 | 99.0% |
-| Terminal logs | 9 | — | 9/9 | 95.7% |
-| Version-control diffs | 8 | 1/8 | — | 90.3% |
-| **Overall** | **43** | **1/8** | **35/35** | **98.8%** |
-
-#### Context Mode comparison
-
-Context Mode 1.0.169 was installed inside the retained Docker Sandbox and run without errors on the identical sanitized fixtures, with one persistent server per mode. Generic passthrough used `ctx_execute_file` to print each fixture unchanged and supplied the same category-level intent as PIRA. Its direct Node file emitter provided its own raw baseline, so Docker startup and server initialization are excluded from the overhead figure. `ctx_index` has no equivalent raw indexing operation, so no synthetic overhead is reported.
-
-Generic passthrough is the closest wrapper-level comparison, but it is not Context Mode's recommended workflow. Context Mode normally asks the model to write task-specific analysis code and return only the derived answer. Its [published benchmark](https://github.com/mksglu/context-mode/blob/main/BENCHMARK.md) reports 98% reduction for task-specific execution, 82% for exact index-plus-search retrieval, and 96% overall. The table therefore compares concrete wrapper behaviors on one corpus, not the full capability or preferred workflow of either system.
-
-Returned-context measurements count UTF-8 bytes, not tokenizer-specific tokens. Immediate visibility checks only whether a preserved changed basename appears in the first response; they do not measure evidence recoverable through later search. Context Mode storage includes its richer SQLite FTS5 retrieval indexes, and fixed database overhead is material on this 3.44 MB corpus.
+This is the closest wrapper-level comparison, not Context Mode's recommended workflow. Context Mode normally asks the model to run task-specific analysis code and return only the derived answer. Its [published benchmark](https://github.com/mksglu/context-mode/blob/main/BENCHMARK.md) reports 98% reduction for task-specific execution, 82% for exact index-plus-search retrieval, and 96% overall. Returned-context measurements here count UTF-8 bytes rather than tokenizer-specific tokens, and immediate visibility does not measure evidence recoverable by later search.
 
 #### Limitations
 
-This is a private implementation benchmark on one arm64 macOS host, not a universal performance claim. It covers successful outputs only and contains no build, test, static-analysis, LaTeX, binary, non-UTF-8, or interactive-terminal cases. GitHub/API availability and conservative privacy filtering reduced category counts unevenly. Diff labels measure changed-basename recall, not complete diagnostic usefulness. Web-search returns are intentionally excluded because Codex built-in web output is not directly captured by the local command wrapper.
+This remains a private implementation benchmark on one arm64 macOS evaluation host, not a universal performance claim. The remote suite is genuinely unseen and post-freeze imported, but its logs predate the freeze and are therefore not prospective outputs. Setup/install and static-analysis coverage remains below the five-case cap because no more eligible unique remote responses were available. Failure markers measure visibility of broad outcome evidence rather than complete diagnostic usefulness. arXiv selection required baseline build availability and includes one intentionally mutated source. Privacy sanitation changes path separators in LaTeX logs. Binary, non-UTF-8, and interactive-terminal behavior are covered by functional tests rather than this corpus. Web-search returns remain excluded because Codex built-in web output is not directly captured by the local command wrapper.
 
 </details>
 
