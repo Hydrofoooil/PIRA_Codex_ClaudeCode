@@ -1,28 +1,6 @@
 use std::path::PathBuf;
 
-pub const USAGE: &str = "\
-Usage:
-  pira_ctx [--store-dir PATH] --intent TEXT [--keyword QUERY ...] -- <command> [args...]
-  pira_ctx exact --intent TEXT [--store-dir PATH] -- <command> [args...]
-  pira_ctx check --intent TEXT [--store-dir PATH] -- <command> [args...]
-  pira_ctx capture|summary [--store-dir PATH] --intent TEXT [--keyword QUERY ...] -- <command> [args...]
-  pira_ctx batch [--store-dir PATH] SPEC_FILE [--intent TEXT]
-  pira_ctx search [--store-dir PATH] RESULT QUERY [--regex] [--context N]
-  pira_ctx range [--store-dir PATH] RESULT START_LINE END_LINE
-  pira_ctx raw [--store-dir PATH] RESULT [--stdout|--stderr]
-  pira_ctx transform [--store-dir PATH] RESULT [--plan FILE] [--match REGEX] [--exclude REGEX]
-                     [--unique] [--count] [--head N] [--tail N]
-  pira_ctx recap [--store-dir PATH] [--limit N]
-  pira_ctx stats [--store-dir PATH] [RESULT]
-  pira_ctx verify [--store-dir PATH] RESULT
-  pira_ctx list [--store-dir PATH] [--workspace current]
-  pira_ctx prune [--store-dir PATH] [--max-age-days N] [--max-store-bytes N]
-  pira_ctx forget [--store-dir PATH] RESULT|events
-  pira_ctx --help | --version
-
-RESULT may be --last, a result ID/prefix, filename, or path.
-INTENT must be a non-empty, single-line purpose of at most 256 UTF-8 bytes.
-Non-interactive exact mode retains and summarizes output only when it is both long and highly repetitive.";
+pub const USAGE: &str = crate::help::GLOBAL;
 
 pub const MAX_INTENT_BYTES: usize = 256;
 pub const MAX_KEYWORDS: usize = 16;
@@ -37,6 +15,7 @@ pub enum Mode {
     Search,
     Range,
     Raw,
+    Exec,
     Transform,
     Recap,
     Batch,
@@ -81,11 +60,15 @@ pub struct Config {
     pub end_line: Option<i64>,
     pub workspace_current: bool,
     pub raw_stream: Option<RawStream>,
+    pub exec_code: Option<String>,
+    pub exec_file: Option<PathBuf>,
+    pub python: Option<String>,
     pub max_age_days: Option<u64>,
     pub max_store_bytes: Option<u64>,
     pub transform: TransformOptions,
     pub limit: usize,
     pub batch_file: Option<PathBuf>,
+    pub help_topic: Option<String>,
 }
 
 impl Default for Config {
@@ -104,22 +87,29 @@ impl Default for Config {
             end_line: None,
             workspace_current: false,
             raw_stream: None,
+            exec_code: None,
+            exec_file: None,
+            python: None,
             max_age_days: None,
             max_store_bytes: None,
             transform: TransformOptions::default(),
             limit: 20,
             batch_file: None,
+            help_topic: None,
         }
     }
 }
 
 pub fn parse_args(args: &[String]) -> Result<Config, String> {
     if args.is_empty() {
-        return Err(USAGE.into());
+        return Err(
+            "missing command or options\nRun `pira_ctx --help` for command selection.".into(),
+        );
     }
-    if matches!(args[0].as_str(), "--help" | "-h" | "help") {
+    if let Some(topic) = parse_help_request(args)? {
         return Ok(Config {
             mode: Mode::Help,
+            help_topic: topic,
             ..Default::default()
         });
     }
@@ -129,8 +119,18 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             ..Default::default()
         });
     }
+    let topic = invocation_topic(args);
+    parse_non_help(args).map_err(|error| usage_error(&topic, error))
+}
+
+fn parse_non_help(args: &[String]) -> Result<Config, String> {
     let mut c = Config::default();
     match args[0].as_str() {
+        "auto" => {
+            let p = parse_exec_options(&mut c, args, 1, true)?;
+            parse_command(&mut c, args, p)?;
+            require_intent(&mut c)?;
+        }
         "exact" => {
             c.mode = Mode::Exact;
             let p = parse_exec_options(&mut c, args, 1, false)?;
@@ -163,6 +163,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             c.end_line = Some(args[p].parse().map_err(|_| "invalid end_line")?);
         }
         "raw" => parse_raw(&mut c, args)?,
+        "exec" => parse_python_exec(&mut c, args)?,
         "transform" => parse_transform(&mut c, args)?,
         "recap" => {
             c.mode = Mode::Recap;
@@ -235,6 +236,110 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     }
     validate_keywords(&c.keywords)?;
     Ok(c)
+}
+
+fn parse_help_request(args: &[String]) -> Result<Option<Option<String>>, String> {
+    let help_flag = |value: &str| matches!(value, "--help" | "-h");
+    let boundary = args
+        .iter()
+        .position(|value| value == "--")
+        .unwrap_or(args.len());
+    let wrapper_args = &args[..boundary];
+    let requested = if wrapper_args.len() == 1
+        && (help_flag(&wrapper_args[0]) || wrapper_args[0] == "help")
+    {
+        return Ok(Some(None));
+    } else if wrapper_args.len() == 2 && (wrapper_args[0] == "help" || help_flag(&wrapper_args[0]))
+    {
+        Some(wrapper_args[1].as_str())
+    } else if wrapper_args.len() == 2 && help_flag(&wrapper_args[1]) {
+        Some(wrapper_args[0].as_str())
+    } else {
+        None
+    };
+    let Some(topic) = requested else {
+        return Ok(None);
+    };
+    let canonical = crate::help::canonical_topic(topic).ok_or_else(|| {
+        format!("unknown help topic {topic:?}\nRun `pira_ctx --help` for command selection.")
+    })?;
+    Ok(Some(Some(canonical.to_string())))
+}
+
+fn invocation_topic(args: &[String]) -> String {
+    crate::help::canonical_topic(&args[0])
+        .unwrap_or("auto")
+        .to_string()
+}
+
+fn usage_error(topic: &str, error: String) -> String {
+    let message = if error == USAGE {
+        format!("invalid {topic} usage")
+    } else {
+        error
+    };
+    format!("{message}\nRun `pira_ctx {topic} --help` for usage.")
+}
+
+fn parse_python_exec(c: &mut Config, args: &[String]) -> Result<(), String> {
+    c.mode = Mode::Exec;
+    let mut p = 1;
+    while p < args.len() {
+        match args[p].as_str() {
+            "--store-dir" => {
+                p += 1;
+                c.store_dir = Some(take(args, &mut p, "--store-dir")?.into());
+            }
+            "--intent" => {
+                p += 1;
+                c.intent = Some(take(args, &mut p, "--intent")?.into());
+            }
+            "--code" => {
+                p += 1;
+                if c.exec_code
+                    .replace(take(args, &mut p, "--code")?.into())
+                    .is_some()
+                {
+                    return Err("choose exactly one --code CODE or --file PATH".into());
+                }
+            }
+            "--file" => {
+                p += 1;
+                if c.exec_file
+                    .replace(take(args, &mut p, "--file")?.into())
+                    .is_some()
+                {
+                    return Err("choose exactly one --code CODE or --file PATH".into());
+                }
+            }
+            "--python" => {
+                p += 1;
+                if c.python
+                    .replace(take(args, &mut p, "--python")?.into())
+                    .is_some()
+                {
+                    return Err("provide --python PATH at most once".into());
+                }
+            }
+            value if c.target.is_none() && (value == "--last" || !value.starts_with('-')) => {
+                c.target = Some(value.into());
+                p += 1;
+            }
+            _ => return Err(USAGE.into()),
+        }
+    }
+    require_intent(c)?;
+    match (c.exec_code.is_some(), c.exec_file.is_some()) {
+        (true, false) | (false, true) => {}
+        _ => return Err("choose exactly one --code CODE or --file PATH".into()),
+    }
+    if c.target.is_none() {
+        return Err("exec requires RESULT".into());
+    }
+    if c.python.as_deref().is_some_and(|value| value.is_empty()) {
+        return Err("--python PATH must not be empty".into());
+    }
+    Ok(())
 }
 
 fn validate_keywords(keywords: &[String]) -> Result<(), String> {
@@ -474,6 +579,72 @@ mod tests {
         )
     }
     #[test]
+    fn auto_is_an_explicit_alias_for_default_execution() {
+        let config = parse_args(&a(&["auto", "--intent", "x", "--", "echo"])).unwrap();
+        assert_eq!(config.mode, Mode::Auto);
+        assert_eq!(config.cmd, a(&["echo"]));
+    }
+    #[test]
+    fn command_help_aliases_resolve_before_validation() {
+        for args in [
+            a(&["exec", "--help"]),
+            a(&["help", "exec"]),
+            a(&["--help", "exec"]),
+            a(&["-h", "exec"]),
+        ] {
+            let config = parse_args(&args).unwrap();
+            assert_eq!(config.mode, Mode::Help);
+            assert_eq!(config.help_topic.as_deref(), Some("exec"));
+        }
+        assert_eq!(
+            parse_args(&a(&["summary", "--help"]))
+                .unwrap()
+                .help_topic
+                .as_deref(),
+            Some("capture")
+        );
+        assert!(parse_args(&a(&["unknown", "--help"])).is_err());
+    }
+    #[test]
+    fn arguments_after_program_delimiter_are_not_wrapper_help() {
+        for args in [
+            a(&["--intent", "x", "--", "program", "--help"]),
+            a(&["auto", "--intent", "x", "--", "program", "-h"]),
+            a(&["exact", "--intent", "x", "--", "program", "help"]),
+            a(&["check", "--intent", "x", "--", "program", "--help"]),
+            a(&["capture", "--intent", "x", "--", "program", "--help"]),
+        ] {
+            let config = parse_args(&args).unwrap();
+            assert_ne!(config.mode, Mode::Help);
+            assert_eq!(config.cmd[0], "program");
+            assert!(matches!(config.cmd[1].as_str(), "--help" | "-h" | "help"));
+        }
+        assert_eq!(
+            parse_args(&a(&[
+                "exact", "--intent", "help", "--", "program", "--help",
+            ]))
+            .unwrap()
+            .intent
+            .as_deref(),
+            Some("help")
+        );
+        assert_eq!(
+            parse_args(&a(
+                &["exec", "RESULT", "--intent", "x", "--code", "--help",]
+            ))
+            .unwrap()
+            .exec_code
+            .as_deref(),
+            Some("--help")
+        );
+    }
+    #[test]
+    fn parse_errors_point_to_command_help_without_global_help() {
+        let error = parse_args(&a(&["exact", "--"])).unwrap_err();
+        assert!(error.contains("pira_ctx exact --help"));
+        assert!(!error.contains("Choosing a command"));
+    }
+    #[test]
     fn check_is_an_intent_required_execution_mode() {
         assert!(parse_args(&a(&["check", "--", "echo"])).is_err());
         assert_eq!(
@@ -481,6 +652,41 @@ mod tests {
                 .unwrap()
                 .mode,
             Mode::Check
+        );
+    }
+
+    #[test]
+    fn python_exec_requires_result_intent_and_one_program_source() {
+        let config = parse_args(&a(&[
+            "exec",
+            "--last",
+            "--intent",
+            "count failures",
+            "--code",
+            "print(MSG_EXIT)",
+        ]))
+        .unwrap();
+        assert_eq!(config.mode, Mode::Exec);
+        assert_eq!(config.target.as_deref(), Some("--last"));
+        assert_eq!(config.exec_code.as_deref(), Some("print(MSG_EXIT)"));
+        assert!(parse_args(&a(&["exec", "--last", "--code", "pass"])).is_err());
+        assert!(parse_args(&a(&["exec", "--intent", "x", "--code", "pass"])).is_err());
+        assert!(
+            parse_args(&a(&[
+                "exec", "--last", "--intent", "x", "--code", "pass", "--file", "a.py"
+            ]))
+            .is_err()
+        );
+        assert!(
+            parse_args(&a(&[
+                "exec",
+                "--unknown",
+                "--intent",
+                "x",
+                "--code",
+                "pass"
+            ]))
+            .is_err()
         );
     }
     #[test]

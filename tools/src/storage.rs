@@ -181,7 +181,7 @@ pub fn store_capture(
     let metadata = Metadata {
         compat_version: FORMAT_VERSION,
         tool_version: format!("pira_ctx-{}", env!("CARGO_PKG_VERSION")),
-        command_argv: command.to_vec(),
+        command_argv: crate::util::redacted_argv(command),
         cwd: capture.cwd.clone(),
         created_at: timestamp,
         start_unix_ms: capture.start_ms,

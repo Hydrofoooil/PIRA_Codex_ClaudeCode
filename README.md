@@ -106,6 +106,30 @@ The script asks before sensitive choices in interactive mode. For unattended set
 | `--verify` | Checks the current setup without writing. |
 | `--dry-run` | Prints planned changes without applying them. |
 
+### Install or refresh only the PIRA tools
+
+If PIRA is already configured and you only need to install, update, or reinstall its bundled native tools, run the tools-only setup from the existing PIRA checkout. Update that checkout first when you want a newer bundled release. The normal command installs a missing tool, replaces a stale copy, and leaves an identical verified copy unchanged.
+
+On macOS or Linux:
+
+```bash
+cd ~/agent
+python3 assets/scripts/setup_pira_tools.py          # install or refresh
+python3 assets/scripts/setup_pira_tools.py --force  # reinstall the same bundled release
+python3 assets/scripts/setup_pira_tools.py --verify # verify without writing
+```
+
+On Windows PowerShell:
+
+```powershell
+cd $HOME\agent
+py -3 assets/scripts/setup_pira_tools.py          # install or refresh
+py -3 assets/scripts/setup_pira_tools.py --force  # reinstall the same bundled release
+py -3 assets/scripts/setup_pira_tools.py --verify # verify without writing
+```
+
+Use `--force` to reinstall even when the installed hash already matches the bundled release. Use `--install-dir PATH` to override the tools-only default (`~/.local/bin` on macOS/Linux or `%LOCALAPPDATA%\PIRA\bin` on Windows), and `--no-path` when PATH persistence is managed separately. Restart the shell or agent process if setup reports that PATH changes are not yet active.
+
 ## What setup changes
 
 The setup script:
@@ -118,13 +142,6 @@ The setup script:
 6. Selects and verifies the bundled native tool for the current platform, then installs or refreshes it in a per-user PATH directory. Existing stale copies are atomically replaced; matching copies are left unchanged.
 7. Optionally delegates audio setup to the platform-specific audio helper.
 8. Verifies the setup, including the PIRA verification token and installed native tool.
-
-Tool setup can also be run independently:
-
-```bash
-python3 assets/scripts/setup_pira_tools.py
-python3 assets/scripts/setup_pira_tools.py --verify
-```
 
 If setup cannot safely handle an existing conflicting file or Codex setting, it stops or skips that action with a warning instead of silently overwriting it.
 
@@ -140,7 +157,7 @@ For compile, test, lint, or other validation jobs where only success or failure 
 
 Explicit `exact` mode streams unchanged when attached to a terminal. In non-interactive agent calls it buffers the result so that long, highly repetitive logs can be auto-switched to a retained summary instead of flooding context; genuinely varied output remains exact, and every switched response announces the decision.
 
-Setup installs a verified native executable in the user's `PATH`. Normal use requires no Python, Rust toolchain, daemon, database, network service, or model call. Captures are private user-cache files with independently compressed blocks and integrity hashes. `pira_ctx` preserves the caller's permissions and does not sandbox commands. Run `pira_ctx --help` for the complete interface. The Rust source is under `tools/src`, and verified builds for macOS arm64/x64, Linux arm64/x64, and Windows x64 are under `tools/dist/pira_ctx`.
+Setup installs a verified native executable in the user's `PATH`. Normal use requires no Python, Rust toolchain, daemon, database, network service, or model call; the optional `exec` command uses an available Python 3 interpreter to analyze a stored capture with explicit code. Captures are private user-cache files with independently compressed blocks and integrity hashes. `pira_ctx` preserves the caller's permissions and does not sandbox commands. Run `pira_ctx --help` to choose a command and `pira_ctx SUBCOMMAND --help` for exact usage. The Rust source is under `tools/src`, and verified builds for macOS arm64/x64, Linux arm64/x64, and Windows x64 are under `tools/dist/pira_ctx`.
 
 ### Relationship to Context Mode
 
@@ -158,7 +175,7 @@ PIRA uses `pira_ctx` when a small dependency-free command wrapper and exact loca
 
 ### Comprehensive held-out benchmark
 
-The current `pira_ctx 0.5.2` source and release artifacts were frozen before collecting or importing held-out output. The final benchmark caps each category at five cases and contains **45 sanitized responses across ten categories**:
+The benchmarked `pira_ctx 0.5.2` source and release artifacts were frozen before collecting or importing held-out output. The final benchmark caps each category at five cases and contains **45 sanitized responses across ten categories**. The optional Python-backed `exec` command added in 0.6.0 is outside this benchmark:
 
 | Suite | Cases | Holdout source |
 |---|---:|---|
@@ -311,6 +328,7 @@ Subagents should load the same bootstrap policy as the main agent. This is handl
 - `USER.md` — user-specific knowledge and working preferences; keep this private
 - `modules/` — optional task-specific modules for research, coding, writing, learning, guidance, and maintenance
 - `assets/scripts/` — setup and helper scripts
+- `tools/build/build_pira_ctx_platform_bins.py` — pinned, reproducibility-checking multi-platform release builder
 - `tools/src/` — public Rust implementation of `pira_ctx`
 - `tools/dist/pira_ctx/` — verified prebuilt `pira_ctx` executables and bundle manifest
 - `PIRA_Voice/Samantha/` — default audio clips for optional Codex notifications
@@ -347,3 +365,7 @@ Suggested BibTeX entry:
 ```
 
 PIRA should be acknowledged as tool assistance, not as scientific authorship.
+
+## License
+
+PIRA is available under the [Apache License 2.0](LICENSE).

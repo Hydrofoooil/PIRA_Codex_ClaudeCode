@@ -179,7 +179,7 @@ impl ListedEntry {
             exit: metadata.exit_code,
             bytes: metadata.total_bytes,
             lines: metadata.total_lines,
-            command: util::argv_display(&metadata.command_argv),
+            command: util::redacted_argv_display(&metadata.command_argv),
             path,
             workspace_hash: metadata.workspace_hash.clone(),
         }

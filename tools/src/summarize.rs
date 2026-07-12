@@ -188,7 +188,7 @@ pub fn representative_groups(
             .replace_all(&timestamp.replace_all(trimmed, "<TIME>"), "<ID>")
             .into_owned();
         let normalized = number.replace_all(&normalized, "<N>").into_owned();
-        let key = normalized.chars().take(160).collect::<String>();
+        let key = normalized.chars().take(64).collect::<String>();
         let entry = groups
             .entry(key)
             .or_insert_with(|| (0, trimmed.chars().take(240).collect()));

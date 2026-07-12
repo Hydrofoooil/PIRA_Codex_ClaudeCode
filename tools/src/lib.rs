@@ -1,7 +1,9 @@
 mod capture;
 mod cli;
 mod events;
+mod help;
 mod model;
+mod python_exec;
 mod storage;
 mod summarize;
 mod transform;
@@ -17,7 +19,6 @@ use model::{CaptureResult, ListedEntry, Metadata, StreamKind};
 use storage::{StoredResult, effective_store_dir};
 
 const AUTO_SUMMARY_THRESHOLD: u64 = 2 * 1024;
-const BATCH_CAPTURE_THRESHOLD: u64 = 3 * 1024;
 const EXACT_GUARD_MIN_LINES: usize = 40;
 const EXACT_GUARD_MAX_LINES: usize = 20_000;
 const MAX_IMPORTANT_LINES: usize = 10;
@@ -39,7 +40,12 @@ fn real_main() -> Result<i32, String> {
     let config = cli::parse_args(&args)?;
     match config.mode {
         Mode::Help => {
-            util::stdout_line(cli::USAGE)?;
+            let text = config
+                .help_topic
+                .as_deref()
+                .and_then(help::command)
+                .unwrap_or(help::GLOBAL);
+            util::stdout_line(text)?;
             Ok(0)
         }
         Mode::Version => {
@@ -53,6 +59,7 @@ fn real_main() -> Result<i32, String> {
         Mode::Search => run_search(&config),
         Mode::Range => run_range(&config),
         Mode::Raw => run_raw(&config),
+        Mode::Exec => run_python_exec(&config),
         Mode::Transform => run_transform(&config),
         Mode::Recap => run_recap(&config),
         Mode::Batch => run_batch(&config),
@@ -62,6 +69,41 @@ fn real_main() -> Result<i32, String> {
         Mode::Prune => run_prune(&config),
         Mode::Forget => run_forget(&config),
     }
+}
+
+fn run_python_exec(config: &Config) -> Result<i32, String> {
+    let source = open_target(config)?;
+    let prepared = python_exec::prepare(config, &source)?;
+    let mut analysis_config = config.clone();
+    analysis_config.cmd = vec![
+        "pira_ctx".to_string(),
+        "exec".to_string(),
+        source.metadata.result_id.clone(),
+    ];
+    let ranking = ranking_terms(&analysis_config);
+    let capture = match capture::capture_command(&prepared.command, &ranking)? {
+        Ok(capture) => capture,
+        Err(code) => {
+            record_event(&analysis_config, code, 0, None);
+            return Ok(code);
+        }
+    };
+    if !should_capture(&capture) {
+        replay_capture(&capture)?;
+        record_event(
+            &analysis_config,
+            capture.exit_code,
+            capture.duration_ms,
+            None,
+        );
+        return Ok(capture.exit_code);
+    }
+    let compact = capture.total_bytes() < AUTO_SUMMARY_THRESHOLD
+        && !capture.stdout.binary
+        && !capture.stderr.binary
+        && !capture.stdout.non_utf8
+        && !capture.stderr.non_utf8;
+    store_and_summarize(&analysis_config, &capture, compact)
 }
 
 fn run_exact(config: &Config) -> Result<i32, String> {
@@ -666,7 +708,7 @@ fn run_stats(config: &Config) -> Result<i32, String> {
     util::stdout_line(&format!("Result: {}", metadata.result_id))?;
     util::stdout_line(&format!(
         "Command: {}",
-        util::argv_display(&metadata.command_argv)
+        util::redacted_argv_display(&metadata.command_argv)
     ))?;
     util::stdout_line(&format!("Cwd: {}", metadata.cwd))?;
     util::stdout_line(&format!("Exit: {}", metadata.exit_code))?;
@@ -810,6 +852,9 @@ fn run_forget(config: &Config) -> Result<i32, String> {
         return Ok(0);
     }
     let path = storage::resolve_result(&dir, target)?;
+    let capture = storage::read_result_path(&path)?;
+    capture.verify()?;
+    drop(capture);
     std::fs::remove_file(&path).map_err(|e| format!("remove {}: {e}", path.display()))?;
     util::stdout_line(&format!("forgot {}", path.display()))?;
     Ok(0)
@@ -891,23 +936,14 @@ fn run_batch(config: &Config) -> Result<i32, String> {
                 continue;
             }
         };
-        let stored = if capture.exit_code != 0 || capture.total_bytes() >= BATCH_CAPTURE_THRESHOLD {
-            Some(storage::store_capture(
-                &dir,
-                &argv,
-                std::slice::from_ref(&intent),
-                &capture,
-            )?)
-        } else {
-            None
-        };
+        let stored = storage::store_capture(&dir, &argv, std::slice::from_ref(&intent), &capture)?;
         if let Err(error) = events::record(
             &dir,
             &intent,
             &argv,
             capture.exit_code,
             capture.duration_ms,
-            stored.as_ref().map(|s| &s.metadata),
+            Some(&stored.metadata),
         ) {
             eprintln!(
                 "pira_ctx: warning: batch child completed but event recording failed: {error}"
@@ -918,10 +954,7 @@ fn run_batch(config: &Config) -> Result<i32, String> {
             index + 1,
             capture.exit_code,
             capture.duration_ms,
-            stored
-                .as_ref()
-                .map(|s| s.metadata.result_id.as_str())
-                .unwrap_or("—"),
+            stored.metadata.result_id,
             intent
         ))?;
         if capture.exit_code != 0 {

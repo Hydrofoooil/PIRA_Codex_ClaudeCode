@@ -3,24 +3,14 @@
 ## Tool Selection
 - Use the lightest reliable tool first.
 - Commands should be deterministic and non-interactive when available.
+- Use the execution tool's working-directory option instead of changing directories inside a command.
 - Repeated or reusable workflows should use a project script rather than one-off shell. After creating one, ask whether to standardize it and then review it for usability and generality.
 - Existing tools should be extended before creating new ones when compatible.
 
 ## `pira_ctx`
-- Consult `pira_ctx --help` about usage. Complain immediately if this is not available and ask for setup.
-- For every shell/exec invocation, choose the first matching case:
-  1. A `pira_ctx` retrieval or maintenance command: invoke it directly.
-  2. Original file content must enter context for editing, patching, line-specific verification, or formatting: use exact mode and read the smallest sufficient file or range.
-  3. The child requires interactive terminal I/O: use exact mode.
-  4. The output must be retained regardless of size: use capture mode.
-  5. Otherwise: use automatic mode.
-- Supply a concise intent describing the immediate purpose of every external command executed in automatic, exact, capture, or batch mode. Keep it single-line and within 256 UTF-8 bytes; when validation rejects it, rerun with a shorter intent.
-- When a capture ID is returned, continue from the stored capture using the narrowest sufficient retrieval or transformation. Rerun the external command only when a new execution is required.
-- For substantial filtering, parsing, counting, grouping, sorting, or aggregation, use a built-in transformation or one analysis script executed through `pira_ctx`.
-- After context compaction in the same continuing session, run `pira_ctx recap` before continuing substantive work.
-- Use the execution tool's working-directory option for directory changes.
-- Apply the existing safety-review rules to every state-changing child command executed through `pira_ctx`.
-- These rules govern command execution and context recovery, not final-response style.
+- Use `pira_ctx` for every shell/exec invocation; invoke `pira_ctx` commands directly.
+- Consult `pira_ctx --help` for command selection and `pira_ctx SUBCOMMAND --help` for exact usage. If `pira_ctx` is unavailable, ask for setup.
+- After same-session context compaction, run `pira_ctx recap` before further shell/exec work.
 
 ## Error Fighting
 - On errors, first analyze the message and pattern, then locate the root cause before fixing. For repeated or unfamiliar errors, search online before the next fix attempt.

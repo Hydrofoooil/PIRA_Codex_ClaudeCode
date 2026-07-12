@@ -41,7 +41,7 @@ pub fn record(
         timestamp_ms: util::millis(SystemTime::now()),
         workspace_hash: workspace_hash.clone(),
         intent: intent.trim().to_string(),
-        command: redacted_command(command),
+        command: util::single_line_clip(&util::redacted_argv_display(command), 2048),
         category: category(command),
         exit_code: exit,
         duration_ms: duration,
@@ -226,59 +226,6 @@ fn observed(exit: i32, metadata: Option<&Metadata>) -> String {
     }
 }
 
-fn redacted_command(command: &[String]) -> String {
-    let mut output = Vec::with_capacity(command.len());
-    let mut redact_next = false;
-    for argument in command {
-        if redact_next {
-            output.push("[REDACTED]".to_string());
-            redact_next = false;
-            continue;
-        }
-        let lower = argument.to_ascii_lowercase();
-        if let Some((key, _)) = argument.split_once('=')
-            && sensitive_name(key)
-        {
-            output.push(format!("{key}=[REDACTED]"));
-            continue;
-        }
-        if sensitive_name(lower.trim_start_matches('-')) {
-            output.push(argument.clone());
-            redact_next = true;
-        } else {
-            output.push(argument.clone())
-        }
-    }
-    util::single_line_clip(&util::argv_display(&output), 2048)
-}
-
-fn sensitive_name(value: &str) -> bool {
-    let normalized = value.to_ascii_lowercase().replace(['-', '_'], "");
-    matches!(
-        normalized.as_str(),
-        "authorization"
-            | "authtoken"
-            | "accesstoken"
-            | "refreshtoken"
-            | "bearer"
-            | "token"
-            | "secret"
-            | "password"
-            | "passwd"
-            | "pwd"
-            | "apikey"
-            | "cookie"
-            | "setcookie"
-            | "signature"
-            | "privatekey"
-            | "clientsecret"
-    ) || normalized.ends_with("authtoken")
-        || normalized.ends_with("accesstoken")
-        || normalized.ends_with("refreshtoken")
-        || normalized.ends_with("apikey")
-        || normalized.ends_with("password")
-        || normalized.ends_with("clientsecret")
-}
 static EVENT_COUNTER: AtomicU64 = AtomicU64::new(0);
 fn short_nonce() -> u64 {
     (util::millis(SystemTime::now()) as u64)
@@ -323,7 +270,7 @@ mod tests {
             "MY_API_KEY=also-secret".into(),
             "safe".into(),
         ];
-        let rendered = redacted_command(&command);
+        let rendered = util::redacted_argv_display(&command);
         assert!(!rendered.contains("secret-value"));
         assert!(!rendered.contains("also-secret"));
         assert!(rendered.contains("safe"));

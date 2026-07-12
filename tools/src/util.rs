@@ -86,6 +86,129 @@ pub fn argv_display(argv: &[String]) -> String {
         .join(" ")
 }
 
+/// Return a display-safe copy of command arguments for persisted metadata and
+/// context-facing output. The command still receives the original arguments.
+pub fn redacted_argv(argv: &[String]) -> Vec<String> {
+    let mut output = Vec::with_capacity(argv.len());
+    let mut redact_next = false;
+    for argument in argv {
+        if redact_next {
+            output.push("[REDACTED]".to_string());
+            redact_next = false;
+            continue;
+        }
+
+        let trimmed = argument.trim();
+        let lower = trimmed.to_ascii_lowercase();
+        if let Some((key, _)) = trimmed.split_once('=')
+            && sensitive_name(key.trim_start_matches('-'))
+        {
+            output.push(format!("{key}=[REDACTED]"));
+            continue;
+        }
+        if let Some((key, _)) = trimmed.split_once(':')
+            && sensitive_name(key.trim_start_matches('-'))
+        {
+            output.push(format!("{key}: [REDACTED]"));
+            continue;
+        }
+        if contains_url_credentials(&lower) || looks_like_bearer(&lower) || looks_like_token(&lower)
+        {
+            output.push("[REDACTED]".to_string());
+            continue;
+        }
+        if sensitive_name(lower.trim_start_matches('-')) {
+            output.push(argument.clone());
+            redact_next = true;
+        } else {
+            output.push(argument.clone());
+        }
+    }
+    output
+}
+
+pub fn redacted_argv_display(argv: &[String]) -> String {
+    argv_display(&redacted_argv(argv))
+}
+
+fn sensitive_name(value: &str) -> bool {
+    let normalized = value.to_ascii_lowercase().replace(['-', '_'], "");
+    matches!(
+        normalized.as_str(),
+        "authorization"
+            | "authtoken"
+            | "accesstoken"
+            | "refreshtoken"
+            | "bearer"
+            | "token"
+            | "secret"
+            | "password"
+            | "passwd"
+            | "pwd"
+            | "apikey"
+            | "cookie"
+            | "setcookie"
+            | "signature"
+            | "privatekey"
+            | "clientsecret"
+    ) || normalized.ends_with("authtoken")
+        || normalized.ends_with("accesstoken")
+        || normalized.ends_with("refreshtoken")
+        || normalized.ends_with("apikey")
+        || normalized.ends_with("password")
+        || normalized.ends_with("clientsecret")
+}
+
+fn contains_url_credentials(value: &str) -> bool {
+    value
+        .split_once("://")
+        .and_then(|(_, remainder)| remainder.split('/').next())
+        .is_some_and(|authority| authority.contains('@') && authority.contains(':'))
+}
+
+fn looks_like_bearer(value: &str) -> bool {
+    value
+        .strip_prefix("bearer ")
+        .is_some_and(|token| !token.trim().is_empty())
+}
+
+fn looks_like_token(value: &str) -> bool {
+    ["ghp_", "gho_", "ghu_", "ghs_", "github_pat_", "sk-"]
+        .iter()
+        .any(|prefix| value.starts_with(prefix) && value.len() > prefix.len() + 8)
+}
+
+#[cfg(test)]
+mod redaction_tests {
+    use super::*;
+
+    #[test]
+    fn redacts_secret_flags_assignments_headers_urls_and_tokens() {
+        let argv = vec![
+            "curl".into(),
+            "--token".into(),
+            "flag-secret".into(),
+            "API_KEY=env-secret".into(),
+            "Authorization: Bearer header-secret".into(),
+            "https://user:url-secret@example.test/path".into(),
+            "ghp_1234567890abcdefghij".into(),
+            "safe".into(),
+        ];
+        let rendered = redacted_argv_display(&argv);
+        for secret in [
+            "flag-secret",
+            "env-secret",
+            "header-secret",
+            "url-secret",
+            "ghp_1234567890abcdefghij",
+        ] {
+            assert!(!rendered.contains(secret));
+        }
+        assert!(rendered.contains("safe"));
+        assert!(rendered.contains("[REDACTED]"));
+    }
+}
+
 fn shellish_quote(value: &str) -> String {
     if value
         .chars()

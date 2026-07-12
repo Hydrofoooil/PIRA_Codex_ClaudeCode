@@ -24,6 +24,9 @@ tools/*
 !tools/Cargo.toml
 !tools/Cargo.lock
 !tools/select_tool_for_platform.py
+!tools/build/
+tools/build/*
+!tools/build/build_pira_ctx_platform_bins.py
 !tools/src/
 !tools/src/**
 !tools/dist/
