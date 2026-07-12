@@ -171,18 +171,20 @@ For compile, test, lint, or other validation jobs where only success or failure 
 
 Explicit `exact` mode streams unchanged when attached to a terminal. In non-interactive calls it buffers the result so that highly repetitive output—or output exceeding retention or indexing bounds—can switch to a retained report instead of flooding or silently truncating context. Genuinely varied output remains exact, and every switch is announced.
 
+For a non-interactive program still running after about 30 seconds, `pira_ctx` silently publishes a read-only checkpoint. Concurrent inspection uses a consistent snapshot without blocking the program; `exec` receives a private copy. Running captures are protected from verification, deletion, and pruning until completion. See `pira_ctx --help` for the exact contract.
+
 Setup installs a verified native executable in the user's `PATH`. Normal use requires no Python, Rust toolchain, daemon, database, network service, or model call; the optional `exec` command uses an available Python 3 interpreter to analyze a stored capture with explicit code. Captures are private user-cache files with independently compressed blocks and integrity hashes. `pira_ctx` preserves the caller's permissions and does not sandbox commands. Run `pira_ctx --help` to choose a command and `pira_ctx SUBCOMMAND --help` for exact usage. Its Rust source is under `tools/src/pira_ctx`, and verified builds for macOS arm64/x64, Linux arm64/x64, and Windows x64 are under `tools/dist/pira_ctx`.
 
 ### Security design
 
 `pira_ctx` treats PROGRAM output as untrusted data, but it is not a sandbox and does not make the wrapped program safe. Its security boundary covers harm introduced by capturing, storing, selecting, or displaying PROGRAM output:
 
-- **Injection-aware display.** Agent-facing extracts are labeled as PROGRAM data, which PIRA rules treat as untrusted, and use trusted line and stream prefixes. Terminal escapes, Unicode line separators, bidirectional overrides, and invisible direction controls are sanitized so output cannot forge report structure or manipulate normal automatic display. A bounded heuristic scans the final displayed text for high-confidence role/wrapper spoofing and common injection wording, including instructions split across displayed lines. When triggered, one warning appears before the evidence. Detection never suppresses or re-ranks evidence, and benign output pays no warning-token cost.
+- **Injection-aware display.** Agent-facing extracts are labeled as PROGRAM data, which PIRA rules treat as untrusted, and use trusted line and stream prefixes. Terminal escapes, Unicode line separators, bidirectional overrides, and invisible direction controls are sanitized so output cannot forge report structure or manipulate normal automatic display. A bounded heuristic scans the final displayed text for reserved role/wrapper markers and common **English** injection keywords, including English instructions split across displayed lines. Keyword detection is not multilingual; non-English text is detected only when it also contains a recognized marker or unsafe display control. When triggered, one warning appears before the evidence. Detection never suppresses or re-ranks evidence, and benign output pays no warning-token cost.
 - **Explicit exactness.** Automatic mode retains short output matched by the advisory heuristic instead of replaying it directly; short `exec` output follows the same routing. `search` applies the same warning. Exact byte-replay paths in `exact`, `raw`, and `range` remain unsanitized because utility and faithful recovery take precedence; they remain untrusted data under PIRA's agent rules.
 - **Bounded space, unbounded time.** Retention defaults to 512 MiB and 1,000,000 indexed lines, with a 2,000,000-line hard ceiling, while eager Python `exec` materialization defaults to 64 MiB. These ceilings are configurable within their safety bounds. Excess output is drained but not retained, and the command continues. `pira_ctx` imposes no runtime timeout or time-based termination, leaving cancellation to the agent or user.
 - **Private, checked storage.** Captures use private user-cache files, independently compressed and SHA-256-checked blocks, validated offsets and lengths, and authenticated metadata/index tables. Common secret-bearing command arguments are redacted from metadata, and result IDs do not derive from raw arguments. Output may still contain secrets, and integrity hashes detect corruption rather than authenticate data against a same-user attacker.
 
-Security checks are separate from ordinary functional tests and run as fixed, non-destructive fixtures in a deny-by-default sandbox with deliberately tiny configurable limits. Against the previous release on 45 held-out benign real logs, the current display changes produced no warnings, reduced every response by 4 bytes, and showed no measurable median runtime regression. An alternating 240-call short-output check likewise measured no regression within run noise. This is best-effort hardening, not a guarantee that every adversarial instruction will be detected; the primary boundary is the rule that PROGRAM output is data and cannot grant authority.
+Security checks are separate from ordinary functional tests and run as fixed, non-destructive fixtures in a deny-by-default sandbox with deliberately tiny configurable limits. Against 0.7.1 on 45 held-out benign real logs, 0.8.0 produced no false warnings, returned byte-identical responses, and showed no measurable median runtime regression in an alternating comparison. The live concurrency contract was also exercised with an inert delayed program in an isolated Linux Docker Sandbox. This is best-effort hardening, not a guarantee that every adversarial instruction will be detected; the primary boundary is the rule that PROGRAM output is data and cannot grant authority.
 
 ### Relationship to Context Mode
 
@@ -200,7 +202,7 @@ PIRA uses `pira_ctx` when a small single-binary wrapper and exact local fallback
 
 ### Comprehensive held-out benchmark
 
-The fixed benchmark caps each category at five cases and contains **45 sanitized responses across ten categories**. Its individual fixture contents were not seen during 0.7.1 development and were not used to tune output selection, scoring, thresholds, or injection heuristics; the fixed runner served as a regression and final measurement gate. The table reports the final `pira_ctx 0.7.1` release candidate on that corpus:
+The fixed benchmark caps each category at five cases and contains **45 sanitized responses across ten categories**. Its individual fixture contents were not seen during development of the output-selection design and were not used to tune selection, scoring, thresholds, injection heuristics, or live checkpointing; the fixed runner served as a regression and final measurement gate. The table reports the final `pira_ctx 0.8.0` release candidate on that corpus:
 
 | Suite | Cases | Holdout source |
 |---|---:|---|
@@ -212,12 +214,12 @@ The remote importer scanned raw logs in memory and persisted only fixed-point sa
 
 | Mode on the same 2,248,456 raw bytes | Returned context | Complete stored state | Median overhead | Immediate labeled evidence |
 |---|---:|---:|---:|---:|
-| `pira_ctx 0.7.1` automatic synopsis | 44,222 B (98.0% reduction) | 602,349 B (73.2% reduction) | +12.1 ms | 7/13 |
+| `pira_ctx 0.8.0` automatic synopsis | 44,222 B (98.0% reduction) | 602,349 B (73.2% reduction) | +14.3 ms | 5/13 |
 | Context Mode generic passthrough | 71,621 B (96.8% reduction) | 17,039,820 B (657.8% overhead) | +16.1 ms | 9/13 |
-| `pira_ctx 0.7.1 check` | 3,064 B (99.9% reduction) | 602,484 B (73.2% reduction) | +11.2 ms | N/A—status only |
+| `pira_ctx 0.8.0 check` | 3,064 B (99.9% reduction) | 602,484 B (73.2% reduction) | +13.2 ms | N/A—status only |
 | Context Mode `ctx_index` receipt | 7,843 B (99.7% reduction) | 13,992,387 B (522.3% overhead) | N/A—no corresponding raw baseline | 0/13 |
 
-All 45 PIRA cases preserved child status, entered full automatic-summary mode, reconstructed every sanitized output exactly, and passed integrity verification. Suggestions correctly abstained in 32/32 successful unlabeled cases; immediate evidence covered 7/8 failure markers and 0/5 changed basenames. The 0.7.1 safety changes do not alter selection or scoring, and the fixed regression runner found unchanged suggestion-quality counts relative to 0.7.0. Context Mode generic passthrough classified all 45 recorded statuses correctly and immediately exposed 7/8 failure markers plus 2/5 changed basenames. These quality figures were not used for tuning.
+All 45 PIRA cases preserved child status, entered full automatic-summary mode, reconstructed every sanitized output exactly, and passed integrity verification. Suggestions correctly abstained in 32/32 successful unlabeled cases; immediate evidence covered 5/8 failure markers and 0/5 changed basenames. Version 0.8.0 does not change selection or scoring: the same fixed replay gives identical quality counts with 0.7.1. Context Mode generic passthrough classified all 45 recorded statuses correctly and immediately exposed 7/8 failure markers plus 2/5 changed basenames. These quality figures were not used for tuning.
 
 <details>
 <summary>Benchmark method, category results, Context Mode comparison, and limitations</summary>
@@ -230,7 +232,7 @@ The remote extension was fixed before inspecting output content. It reconstructe
 
 LaTeX coverage therefore uses arXiv sources compiled inside the retained Docker Sandbox with TeX Live and shell escape disabled. Candidate papers came from a binary-seeded shuffle of the recent `cs.LG` API pool. Repeated transport interruptions caused the live recent-entry pool to drift, so the five already downloaded public identifiers were frozen before corpus persistence or PIRA evaluation. One paper compiled successfully; its fresh source also produced a controlled undefined-command failure. Three additional papers contributed natural compilation failures, yielding one pass and four failures. Raw paper sources were disposable and were not committed.
 
-Each suite's output-quality labels were fixed during the original holdout evaluation and were not revised for 0.7.1. The visible aggregate performance figures come from the final no-tuning 0.7.1 replay of the selected 45 fixtures through one persistent automatic store and one persistent `check` store. Every call used an identical raw fixture-emitter baseline; overhead is `wrapped wall time - raw-operation wall time`, summarized by the per-case median. Stored state includes captures, indexes, and event history but excludes installed binaries and runtimes.
+Each suite's output-quality labels were fixed during the original holdout evaluation and were not revised for 0.8.0. The visible aggregate performance figures come from the final no-tuning 0.8.0 replay of the selected 45 fixtures through one persistent automatic store and one persistent `check` store. Every call used an identical raw fixture-emitter baseline; overhead is `wrapped wall time - raw-operation wall time`, summarized by the per-case median. Stored state includes captures, indexes, and event history but excludes installed binaries and runtimes.
 
 | Held-out category | Cases | Outcomes | Immediate quality | Context reduction |
 |---|---:|---:|---:|---:|
@@ -239,7 +241,7 @@ Each suite's output-quality labels were fixed during the original holdout evalua
 | Search and listing | 5 | 5 success | 5/5 abstentions | 98.9% |
 | Terminal logs | 5 | 5 success | 5/5 abstentions | 95.5% |
 | Version-control diffs | 5 | 5 success | 0/5 changed basenames | 91.1% |
-| Builds | 5 | 3 success, 2 failure | 3/3 abstentions; 2/2 markers | 75.4% |
+| Builds | 5 | 3 success, 2 failure | 3/3 abstentions; 0/2 markers | 75.4% |
 | Test runs | 5 | 3 success, 2 failure | 3/3 abstentions; 2/2 markers | 87.9% |
 | Setup and installation | 4 | 4 success | 4/4 abstentions | 78.5% |
 | Static analysis | 1 | 1 success | 1/1 abstention | 92.5% |

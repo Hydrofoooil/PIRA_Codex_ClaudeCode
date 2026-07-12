@@ -1,11 +1,11 @@
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Instant, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use sha2::{Digest, Sha256};
 
@@ -15,7 +15,7 @@ use crate::{spawn_command, util};
 const DEFAULT_MAX_RETAINED_BYTES: u64 = 512 * 1024 * 1024;
 const DEFAULT_MAX_INDEXED_LINES: usize = 1_000_000;
 const HARD_MAX_INDEXED_LINES: usize = 2_000_000;
-const LINE_CHANNEL_CAPACITY: usize = 4096;
+const DEFAULT_LIVE_CHECKPOINT_MS: u64 = 30_000;
 
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
@@ -36,12 +36,17 @@ struct StreamAnalysis {
     non_utf8: bool,
 }
 
+#[derive(Clone)]
 struct CollectedLines {
     timeline: Vec<LineMeta>,
     total: usize,
     stdout: usize,
     stderr: usize,
     truncated: bool,
+    stdout_bytes: u64,
+    stderr_bytes: u64,
+    stdout_line_start: u64,
+    stderr_line_start: u64,
 }
 
 struct RetentionBudget {
@@ -71,7 +76,10 @@ impl RetentionBudget {
     }
 }
 
-pub fn capture_command(cmd: &[String]) -> Result<Result<CaptureResult, i32>, String> {
+pub fn capture_command(
+    cmd: &[String],
+    live_store_dir: Option<&Path>,
+) -> Result<Result<CaptureResult, i32>, String> {
     if cmd.is_empty() {
         return Err(crate::cli::USAGE.to_string());
     }
@@ -121,37 +129,140 @@ pub fn capture_command(cmd: &[String]) -> Result<Result<CaptureResult, i32>, Str
         .stderr
         .take()
         .ok_or_else(|| "failed to capture stderr".to_string())?;
-    let (sender, receiver) = mpsc::sync_channel::<StreamLine>(LINE_CHANNEL_CAPACITY);
-    let stdout_sender = sender.clone();
+    let collected = Arc::new(Mutex::new(CollectedLines {
+        timeline: Vec::new(),
+        total: 0,
+        stdout: 0,
+        stderr: 0,
+        truncated: false,
+        stdout_bytes: 0,
+        stderr_bytes: 0,
+        stdout_line_start: 0,
+        stderr_line_start: 0,
+    }));
+    let stdout_collected = Arc::clone(&collected);
     let stdout_budget = Arc::clone(&budget);
     let stdout_handle = thread::spawn(move || {
         read_stream(
             child_stdout,
             stdout_file,
             StreamKind::Stdout,
-            stdout_sender,
+            &stdout_collected,
+            indexed_line_limit,
             &stdout_budget,
         )
     });
+    let stderr_collected = Arc::clone(&collected);
     let stderr_budget = Arc::clone(&budget);
     let stderr_handle = thread::spawn(move || {
         read_stream(
             child_stderr,
             stderr_file,
             StreamKind::Stderr,
-            sender,
+            &stderr_collected,
+            indexed_line_limit,
             &stderr_budget,
         )
     });
-    let collector_handle = thread::spawn(move || collect_lines(receiver, indexed_line_limit));
-
+    let checkpoint_interval = Duration::from_millis(configured_u64(
+        "PIRA_CTX_LIVE_CHECKPOINT_MS",
+        DEFAULT_LIVE_CHECKPOINT_MS,
+        100,
+    ));
+    let (checkpoint_stop, checkpoint_receiver) = mpsc::channel();
+    let checkpoint_handle = live_store_dir.map(|store_dir| {
+        let store_dir = store_dir.to_path_buf();
+        let command = cmd.to_vec();
+        let cwd = cwd.clone();
+        let stdout_path = stdout_spool.path().to_path_buf();
+        let stderr_path = stderr_spool.path().to_path_buf();
+        let collected = Arc::clone(&collected);
+        thread::spawn(move || {
+            let mut live_id = None;
+            let mut generation = 0_u64;
+            loop {
+                match checkpoint_receiver.recv_timeout(checkpoint_interval) {
+                    Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {}
+                }
+                let Ok(snapshot) = collected.lock().map(|state| state.clone()) else {
+                    break;
+                };
+                generation = generation.saturating_add(1);
+                let mut timeline = snapshot.timeline.clone();
+                let mut total_lines = snapshot.total;
+                let mut stdout_lines = snapshot.stdout;
+                let mut stderr_lines = snapshot.stderr;
+                if !snapshot.truncated {
+                    for (stream, start, end) in [
+                        (
+                            StreamKind::Stdout,
+                            snapshot.stdout_line_start,
+                            snapshot.stdout_bytes,
+                        ),
+                        (
+                            StreamKind::Stderr,
+                            snapshot.stderr_line_start,
+                            snapshot.stderr_bytes,
+                        ),
+                    ] {
+                        if start < end {
+                            total_lines += 1;
+                            match stream {
+                                StreamKind::Stdout => stdout_lines += 1,
+                                StreamKind::Stderr => stderr_lines += 1,
+                            }
+                            timeline.push(LineMeta {
+                                line: total_lines,
+                                stream,
+                                offset: start,
+                                length: end - start,
+                                score: 0,
+                                flags: 0,
+                            });
+                        }
+                    }
+                }
+                let checkpoint = crate::storage::LiveCheckpoint {
+                    command: &command,
+                    cwd: &cwd,
+                    start_ms,
+                    duration_ms: elapsed.elapsed().as_millis(),
+                    stdout_path: &stdout_path,
+                    stderr_path: &stderr_path,
+                    stdout_bytes: snapshot.stdout_bytes,
+                    stderr_bytes: snapshot.stderr_bytes,
+                    stdout_lines,
+                    stderr_lines,
+                    total_lines,
+                    timeline: &timeline,
+                    timeline_truncated: snapshot.truncated,
+                };
+                match crate::storage::write_live_checkpoint(
+                    &store_dir,
+                    live_id.as_deref(),
+                    generation,
+                    &checkpoint,
+                ) {
+                    Ok(id) => live_id = Some(id),
+                    Err(_) => break,
+                }
+            }
+            live_id
+        })
+    });
     let status = child.wait().map_err(|error| error.to_string())?;
+    let _ = checkpoint_stop.send(());
+    let live_id = checkpoint_handle
+        .and_then(|handle| handle.join().ok())
+        .flatten();
     let end_ms = util::millis(SystemTime::now());
     let stdout_analysis = join_reader(stdout_handle, "stdout")?;
     let stderr_analysis = join_reader(stderr_handle, "stderr")?;
-    let collected = collector_handle
-        .join()
-        .map_err(|_| "line collector panicked".to_string())?;
+    let collected = collected
+        .lock()
+        .map_err(|_| "capture state lock poisoned".to_string())?
+        .clone();
     let retention_truncated = stdout_analysis.observed_length > stdout_analysis.length
         || stderr_analysis.observed_length > stderr_analysis.length;
     let stdout = TempSpool {
@@ -185,40 +296,10 @@ pub fn capture_command(cmd: &[String]) -> Result<Result<CaptureResult, i32>, Str
         end_ms,
         duration_ms: elapsed.elapsed().as_millis(),
         cwd,
+        live_id,
+        live_store_dir: live_store_dir.map(Path::to_path_buf),
     };
     Ok(Ok(capture))
-}
-
-fn collect_lines(receiver: mpsc::Receiver<StreamLine>, maximum: usize) -> CollectedLines {
-    let mut timeline = Vec::new();
-    let mut total = 0_usize;
-    let mut stdout = 0_usize;
-    let mut stderr = 0_usize;
-    for event in receiver {
-        total += 1;
-        match event.stream {
-            StreamKind::Stdout => stdout += 1,
-            StreamKind::Stderr => stderr += 1,
-        }
-        let line = LineMeta {
-            line: total,
-            stream: event.stream,
-            offset: event.offset,
-            length: event.length,
-            score: 0,
-            flags: 0,
-        };
-        if timeline.len() < maximum {
-            timeline.push(line);
-        }
-    }
-    CollectedLines {
-        timeline,
-        total,
-        stdout,
-        stderr,
-        truncated: total > maximum,
-    }
 }
 
 fn join_reader(
@@ -257,6 +338,10 @@ struct SpoolGuard {
 }
 
 impl SpoolGuard {
+    fn path(&self) -> &Path {
+        self.path.as_deref().expect("spool guard already disarmed")
+    }
+
     fn disarm(&mut self) -> PathBuf {
         self.path.take().expect("spool guard already disarmed")
     }
@@ -274,7 +359,8 @@ fn read_stream<R: Read>(
     mut input: R,
     mut output: File,
     stream: StreamKind,
-    sender: mpsc::SyncSender<StreamLine>,
+    collected: &Mutex<CollectedLines>,
+    indexed_line_limit: usize,
     budget: &RetentionBudget,
 ) -> io::Result<StreamAnalysis> {
     let mut buffer = [0_u8; 64 * 1024];
@@ -304,10 +390,11 @@ fn read_stream<R: Read>(
             .iter()
             .filter(|&&byte| byte < 0x20 && !matches!(byte, b'\n' | b'\r' | b'\t' | 0x1b))
             .count() as u64;
+        let mut lines = Vec::new();
         for (index, byte) in chunk.iter().enumerate() {
             if *byte == b'\n' {
                 let end = offset + index as u64 + 1;
-                let _ = sender.send(StreamLine {
+                lines.push(StreamLine {
                     stream,
                     offset: line_start,
                     length: end - line_start,
@@ -316,13 +403,28 @@ fn read_stream<R: Read>(
             }
         }
         offset += retained as u64;
+        commit_stream_progress(
+            collected,
+            stream,
+            offset,
+            line_start,
+            lines,
+            indexed_line_limit,
+        )?;
     }
     if line_start < offset {
-        let _ = sender.send(StreamLine {
+        commit_stream_progress(
+            collected,
             stream,
-            offset: line_start,
-            length: offset - line_start,
-        });
+            offset,
+            offset,
+            vec![StreamLine {
+                stream,
+                offset: line_start,
+                length: offset - line_start,
+            }],
+            indexed_line_limit,
+        )?;
     }
     // This is an ephemeral spool. Closing the writer makes its bytes visible to
     // the later reader; durable synchronization belongs to the final capture.
@@ -334,6 +436,50 @@ fn read_stream<R: Read>(
         binary: null_seen || (offset > 0 && controls.saturating_mul(100) / offset > 30),
         non_utf8: validator.finish(),
     })
+}
+
+fn commit_stream_progress(
+    shared: &Mutex<CollectedLines>,
+    stream: StreamKind,
+    length: u64,
+    line_start: u64,
+    lines: Vec<StreamLine>,
+    maximum: usize,
+) -> io::Result<()> {
+    let mut state = shared
+        .lock()
+        .map_err(|_| io::Error::other("capture state lock poisoned"))?;
+    match stream {
+        StreamKind::Stdout => {
+            state.stdout_bytes = length;
+            state.stdout_line_start = line_start;
+        }
+        StreamKind::Stderr => {
+            state.stderr_bytes = length;
+            state.stderr_line_start = line_start;
+        }
+    }
+    for event in lines {
+        state.total += 1;
+        match event.stream {
+            StreamKind::Stdout => state.stdout += 1,
+            StreamKind::Stderr => state.stderr += 1,
+        }
+        let line = LineMeta {
+            line: state.total,
+            stream: event.stream,
+            offset: event.offset,
+            length: event.length,
+            score: 0,
+            flags: 0,
+        };
+        if state.timeline.len() < maximum {
+            state.timeline.push(line);
+        } else {
+            state.truncated = true;
+        }
+    }
+    Ok(())
 }
 
 fn configured_u64(name: &str, default: u64, minimum: u64) -> u64 {

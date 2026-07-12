@@ -12,7 +12,7 @@ use crate::storage::StoredResult;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 
 const BOOTSTRAP: &str = r#"import sys
-msg_path, stdout_path, stderr_path, msg_id, msg_exit, code_path, source_name = sys.argv[1:8]
+msg_path, stdout_path, stderr_path, msg_id, msg_exit, msg_state, msg_generation, code_path, source_name = sys.argv[1:10]
 with open(msg_path, "rb") as _f:
     MSG_BYTES = _f.read()
 MSG = MSG_BYTES.decode("utf-8", "replace")
@@ -20,7 +20,9 @@ MSG_PATH = msg_path
 MSG_STDOUT_PATH = stdout_path
 MSG_STDERR_PATH = stderr_path
 MSG_ID = msg_id
-MSG_EXIT = int(msg_exit)
+MSG_EXIT = None if msg_exit == "" else int(msg_exit)
+MSG_STATE = msg_state
+MSG_GENERATION = int(msg_generation)
 with open(code_path, "rb") as _f:
     source = _f.read()
 scope = {
@@ -33,6 +35,8 @@ scope = {
     "MSG_STDERR_PATH": MSG_STDERR_PATH,
     "MSG_ID": MSG_ID,
     "MSG_EXIT": MSG_EXIT,
+    "MSG_STATE": MSG_STATE,
+    "MSG_GENERATION": MSG_GENERATION,
 }
 sys.argv = [source_name]
 exec(compile(source, source_name, "exec"), scope, scope)
@@ -89,7 +93,18 @@ pub fn prepare(config: &Config, source: &StoredResult) -> Result<PreparedExec, S
         stdout_path.display().to_string(),
         stderr_path.display().to_string(),
         source.metadata.result_id.clone(),
-        source.metadata.exit_code.to_string(),
+        if source.is_running() {
+            String::new()
+        } else {
+            source.metadata.exit_code.to_string()
+        },
+        if source.is_running() {
+            "running"
+        } else {
+            "complete"
+        }
+        .to_string(),
+        source.live_generation().unwrap_or_default().to_string(),
         code_path.display().to_string(),
         source_name,
     ]);

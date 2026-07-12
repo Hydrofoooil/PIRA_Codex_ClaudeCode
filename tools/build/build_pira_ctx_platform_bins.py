@@ -445,7 +445,11 @@ def main(argv: list[str] | None = None) -> int:
         update_bundle_manifest(args.bundle_dir, published, args.toolchain)
         print("\nPublished binaries:")
         for path in published:
-            print(f"{sha256(path)}  {path.relative_to(REPO_ROOT)}")
+            try:
+                displayed = path.relative_to(REPO_ROOT)
+            except ValueError:
+                displayed = path
+            print(f"{sha256(path)}  {displayed}")
         return 0
     finally:
         if not args.keep_build_roots:

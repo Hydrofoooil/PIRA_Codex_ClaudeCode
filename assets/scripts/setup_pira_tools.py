@@ -224,7 +224,12 @@ def main(argv: list[str] | None = None) -> int:
         actual = sha256(installed)
         if actual != expected:
             raise RuntimeError("installed tool hash does not match bundle manifest")
-        print(f"{action.capitalize()}ed: {installed}")
+        completed_action = {
+            "install": "Installed",
+            "refresh": "Refreshed",
+            "unchanged": "Refreshed",
+        }[action]
+        print(f"{completed_action}: {installed}")
 
     if not args.no_path:
         ensure_path(install_dir, args.dry_run)

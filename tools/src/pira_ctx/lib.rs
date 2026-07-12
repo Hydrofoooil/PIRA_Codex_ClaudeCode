@@ -82,7 +82,7 @@ fn run_python_exec(config: &Config) -> Result<i32, String> {
         source.metadata.result_id.clone(),
     ];
     let ranking = ranking_terms(&analysis_config);
-    let mut capture = match capture::capture_command(&prepared.command)? {
+    let mut capture = match capture_program(&analysis_config, &prepared.command)? {
         Ok(capture) => capture,
         Err(code) => {
             record_event(&analysis_config, code, 0, None);
@@ -116,7 +116,7 @@ fn run_exact(config: &Config) -> Result<i32, String> {
         return run_streaming_exact(config);
     }
     let ranking = ranking_terms(config);
-    let mut capture = match capture::capture_command(&config.cmd)? {
+    let mut capture = match capture_program(config, &config.cmd)? {
         Ok(capture) => capture,
         Err(code) => {
             record_event(config, code, 0, None);
@@ -269,7 +269,7 @@ fn run_auto(config: &Config) -> Result<i32, String> {
         return run_exact(config);
     }
     let ranking = ranking_terms(config);
-    let mut capture = match capture::capture_command(&config.cmd)? {
+    let mut capture = match capture_program(config, &config.cmd)? {
         Ok(capture) => capture,
         Err(code) => {
             record_event(config, code, 0, None);
@@ -315,7 +315,7 @@ fn inspect_capture_for_context(capture: &CaptureResult) -> Result<security::Cont
 
 fn run_check(config: &Config) -> Result<i32, String> {
     let ranking = ranking_terms(config);
-    let mut capture = match capture::capture_command(&config.cmd)? {
+    let mut capture = match capture_program(config, &config.cmd)? {
         Ok(capture) => capture,
         Err(code) => {
             util::stdout_line(&format!(
@@ -361,7 +361,8 @@ fn check_label(exit_code: i32) -> &'static str {
 
 fn should_capture(capture: &CaptureResult) -> bool {
     use model::line_flag;
-    capture.total_bytes() >= AUTO_SUMMARY_THRESHOLD
+    capture.live_id.is_some()
+        || capture.total_bytes() >= AUTO_SUMMARY_THRESHOLD
         || capture.stdout.binary
         || capture.stderr.binary
         || capture.stdout.non_utf8
@@ -380,7 +381,7 @@ fn should_capture(capture: &CaptureResult) -> bool {
 
 fn run_capture(config: &Config) -> Result<i32, String> {
     let ranking = ranking_terms(config);
-    let mut capture = match capture::capture_command(&config.cmd)? {
+    let mut capture = match capture_program(config, &config.cmd)? {
         Ok(capture) => capture,
         Err(code) => {
             record_event(config, code, 0, None);
@@ -434,6 +435,14 @@ fn ranking_terms(config: &Config) -> Vec<String> {
     terms.sort();
     terms.dedup();
     terms
+}
+
+fn capture_program(
+    config: &Config,
+    command: &[String],
+) -> Result<Result<CaptureResult, i32>, String> {
+    let store_dir = effective_store_dir(config.store_dir.as_ref())?;
+    capture::capture_command(command, Some(&store_dir))
 }
 
 fn record_event(config: &Config, exit: i32, duration: u128, metadata: Option<&Metadata>) {
@@ -932,12 +941,28 @@ fn run_stats(config: &Config) -> Result<i32, String> {
     let store = open_target(config)?;
     let metadata = &store.metadata;
     util::stdout_line(&format!("Result: {}", metadata.result_id))?;
+    if store.is_running() {
+        util::stdout_line("State: running (checkpoint snapshot)")?;
+        util::stdout_line(&format!(
+            "Generation: {}",
+            store.live_generation().unwrap_or_default()
+        ))?;
+        let age = util::millis(std::time::SystemTime::now())
+            .saturating_sub(store.checkpoint_unix_ms().unwrap_or_default());
+        util::stdout_line(&format!("CheckpointAge: {age} ms"))?;
+    } else {
+        util::stdout_line("State: complete")?;
+    }
     util::stdout_line(&format!(
         "Command: {}",
         util::redacted_argv_display(&metadata.command_argv)
     ))?;
     util::stdout_line(&format!("Cwd: {}", metadata.cwd))?;
-    util::stdout_line(&format!("Exit: {}", metadata.exit_code))?;
+    if store.is_running() {
+        util::stdout_line("Exit: unknown")?;
+    } else {
+        util::stdout_line(&format!("Exit: {}", metadata.exit_code))?;
+    }
     util::stdout_line(&format!("Duration: {} ms", metadata.duration_ms))?;
     util::stdout_line(&format!(
         "Size: stdout={} stderr={} total={} bytes",
@@ -991,7 +1016,7 @@ fn run_list(config: &Config) -> Result<i32, String> {
     };
     let entries = storage::scan_store(&store_dir, filter.as_deref())?;
     let omitted = entries.len().saturating_sub(config.limit);
-    util::stdout_line("id | timestamp | exit | bytes | lines | command")?;
+    util::stdout_line("id | state | timestamp | exit | bytes | lines | command")?;
     for entry in entries.into_iter().take(config.limit) {
         print_listed_entry(&entry)?;
     }
@@ -1005,8 +1030,18 @@ fn run_list(config: &Config) -> Result<i32, String> {
 
 fn print_listed_entry(entry: &ListedEntry) -> Result<(), String> {
     util::stdout_line(&format!(
-        "{} | {} | {} | {} | {} | {}",
-        entry.id, entry.timestamp, entry.exit, entry.bytes, entry.lines, entry.command
+        "{} | {} | {} | {} | {} | {} | {}",
+        entry.id,
+        if entry.running { "running" } else { "complete" },
+        entry.timestamp,
+        if entry.running {
+            "-".to_string()
+        } else {
+            entry.exit.to_string()
+        },
+        entry.bytes,
+        entry.lines,
+        entry.command
     ))
 }
 
@@ -1155,8 +1190,9 @@ fn run_batch(config: &Config) -> Result<i32, String> {
             let Some((index, (intent, argv))) = pending.next() else {
                 break;
             };
+            let worker_dir = dir.clone();
             handles.push(std::thread::spawn(move || {
-                let result = capture::capture_command(&argv);
+                let result = capture::capture_command(&argv, Some(&worker_dir));
                 (index, intent, argv, result)
             }));
         }

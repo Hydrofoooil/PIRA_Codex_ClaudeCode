@@ -47,10 +47,41 @@ pub struct StoredResult {
     stderr_hash: Option<[u8; 32]>,
     stdout_blocks: Option<Vec<BlockDescriptor>>,
     stderr_blocks: Option<Vec<BlockDescriptor>>,
+    live: Option<LiveState>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LiveState {
+    pub generation: u64,
+    pub checkpoint_unix_ms: u128,
+    stdout_path: PathBuf,
+    stderr_path: PathBuf,
 }
 
 impl StoredResult {
+    pub fn is_running(&self) -> bool {
+        self.live.is_some()
+    }
+
+    pub fn live_generation(&self) -> Option<u64> {
+        self.live.as_ref().map(|state| state.generation)
+    }
+
+    pub fn checkpoint_unix_ms(&self) -> Option<u128> {
+        self.live.as_ref().map(|state| state.checkpoint_unix_ms)
+    }
+
     pub fn reader(&self) -> Result<StreamReaders, String> {
+        if let Some(live) = &self.live {
+            return StreamReaders::from_paths(
+                &live.stdout_path,
+                0,
+                self.metadata.stdout_bytes,
+                &live.stderr_path,
+                0,
+                self.metadata.stderr_bytes,
+            );
+        }
         if let (Some(stdout), Some(stderr)) = (&self.stdout_blocks, &self.stderr_blocks) {
             return StreamReaders::from_blocks(
                 &self.path,
@@ -73,6 +104,9 @@ impl StoredResult {
     }
 
     pub fn verify(&self) -> Result<(), String> {
+        if self.is_running() {
+            return Err("cannot verify a running capture; retry after PROGRAM exits".into());
+        }
         if self.stdout_blocks.is_some() {
             let mut readers = self.reader()?;
             let mut stdout = HashSink(Sha256::new());
@@ -108,6 +142,146 @@ impl StoredResult {
         }
         Ok(())
     }
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct LiveManifest {
+    schema: u32,
+    generation: u64,
+    checkpoint_unix_ms: u128,
+    stdout_path: PathBuf,
+    stderr_path: PathBuf,
+    metadata: Metadata,
+}
+
+#[derive(Debug)]
+pub struct LiveCheckpoint<'a> {
+    pub command: &'a [String],
+    pub cwd: &'a str,
+    pub start_ms: u128,
+    pub duration_ms: u128,
+    pub stdout_path: &'a Path,
+    pub stderr_path: &'a Path,
+    pub stdout_bytes: u64,
+    pub stderr_bytes: u64,
+    pub stdout_lines: usize,
+    pub stderr_lines: usize,
+    pub total_lines: usize,
+    pub timeline: &'a [crate::model::LineMeta],
+    pub timeline_truncated: bool,
+}
+
+pub fn write_live_checkpoint(
+    store_dir: &Path,
+    result_id: Option<&str>,
+    generation: u64,
+    snapshot: &LiveCheckpoint<'_>,
+) -> Result<String, String> {
+    ensure_private_dir(store_dir)?;
+    let live_dir = store_dir.join("live");
+    ensure_private_dir(&live_dir)?;
+    let result_id = match result_id {
+        Some(value) => value.to_string(),
+        None => {
+            let timestamp = format_utc_timestamp(snapshot.start_ms / 1000);
+            let mut seed = Vec::new();
+            seed.extend_from_slice(snapshot.cwd.as_bytes());
+            seed.extend_from_slice(&snapshot.start_ms.to_le_bytes());
+            seed.extend_from_slice(&std::process::id().to_le_bytes());
+            seed.extend_from_slice(&RESULT_COUNTER.fetch_add(1, Ordering::Relaxed).to_le_bytes());
+            format!("{}-{}", timestamp, short_hash(&seed, 12))
+        }
+    };
+    if !result_id
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    {
+        return Err("invalid live result id".into());
+    }
+    let workspace_id = workspace_id()?;
+    let workspace_hash = short_hash(workspace_id.as_bytes(), 16);
+    let total_bytes = snapshot.stdout_bytes.saturating_add(snapshot.stderr_bytes);
+    let checkpoint_unix_ms = util::millis(SystemTime::now());
+    let filename = format!("{result_id}.live.json");
+    let path = live_dir.join(&filename);
+    let metadata = Metadata {
+        compat_version: FORMAT_VERSION,
+        tool_version: format!("pira_ctx-{}", env!("CARGO_PKG_VERSION")),
+        command_argv: crate::util::redacted_argv(snapshot.command),
+        cwd: snapshot.cwd.to_string(),
+        created_at: format_utc_timestamp(snapshot.start_ms / 1000),
+        start_unix_ms: snapshot.start_ms,
+        end_unix_ms: checkpoint_unix_ms,
+        duration_ms: snapshot.duration_ms,
+        exit_code: 0,
+        stdout_bytes: snapshot.stdout_bytes,
+        stderr_bytes: snapshot.stderr_bytes,
+        total_bytes,
+        observed_stdout_bytes: snapshot.stdout_bytes,
+        observed_stderr_bytes: snapshot.stderr_bytes,
+        observed_total_bytes: total_bytes,
+        retention_truncated: false,
+        stdout_lines: snapshot.stdout_lines,
+        stderr_lines: snapshot.stderr_lines,
+        total_lines: snapshot.total_lines,
+        detected_paths: Vec::new(),
+        binary_stdout: false,
+        binary_stderr: false,
+        non_utf8_stdout: false,
+        non_utf8_stderr: false,
+        line_timeline: snapshot.timeline.to_vec(),
+        suggested_keywords: Vec::new(),
+        store_dir: store_dir.display().to_string(),
+        store_path: path.display().to_string(),
+        filename: filename.clone(),
+        result_id: result_id.clone(),
+        workspace_id,
+        workspace_hash,
+        stdout_sha256: String::new(),
+        stderr_sha256: String::new(),
+        timeline_truncated: snapshot.timeline_truncated,
+    };
+    let manifest = LiveManifest {
+        schema: 1,
+        generation,
+        checkpoint_unix_ms,
+        stdout_path: snapshot.stdout_path.to_path_buf(),
+        stderr_path: snapshot.stderr_path.to_path_buf(),
+        metadata,
+    };
+    let bytes = serde_json::to_vec(&manifest).map_err(|error| error.to_string())?;
+    if bytes.len() as u64 > MAX_METADATA_BYTES {
+        return Err("live checkpoint metadata is too large".into());
+    }
+    let temporary = live_dir.join(format!(".{result_id}.{}.tmp", std::process::id()));
+    write_private_file_relaxed(&temporary, &bytes)?;
+    if let Err(error) = fs::rename(&temporary, &path) {
+        #[cfg(windows)]
+        {
+            // Windows rename does not replace an existing destination. Readers
+            // see either the previous complete manifest or a brief absence.
+            if path.is_file() {
+                fs::remove_file(&path)
+                    .and_then(|()| fs::rename(&temporary, &path))
+                    .map_err(|retry| format!("publish live checkpoint: {retry}"))?;
+            } else {
+                return Err(format!("publish live checkpoint: {error}"));
+            }
+        }
+        #[cfg(not(windows))]
+        return Err(format!("publish live checkpoint: {error}"));
+    }
+    Ok(result_id)
+}
+
+fn live_manifest_path(store_dir: &Path, result_id: &str) -> PathBuf {
+    store_dir
+        .join("live")
+        .join(format!("{result_id}.live.json"))
+}
+
+pub fn remove_live_checkpoint(store_dir: &Path, result_id: &str) {
+    let _ = fs::remove_file(live_manifest_path(store_dir, result_id));
 }
 
 struct HashSink(Sha256);
@@ -187,7 +361,15 @@ pub fn store_capture(
             .to_le_bytes(),
     );
     let base_id = format!("{}-{}", timestamp, short_hash(&seed, 12));
-    let (result_id, filename, path) = available_result_path(store_dir, &base_id);
+    let (result_id, filename, path) = if let Some(id) = &capture.live_id {
+        (
+            id.clone(),
+            format!("{id}.piractx"),
+            store_dir.join(format!("{id}.piractx")),
+        )
+    } else {
+        available_result_path(store_dir, &base_id)
+    };
     let detected_paths = summarize::detected_paths(capture)?;
     let suggested_keywords = summarize::suggested_keywords(capture, command, keywords)?;
     let metadata = Metadata {
@@ -236,6 +418,9 @@ pub fn store_capture(
     if let Err(error) = update_index(store_dir, &entry, &dirty) {
         let _ = fs::remove_file(store_dir.join("indexes").join(INDEX_COMPLETE));
         eprintln!("pira_ctx: warning: stored result but could not update index: {error}");
+    }
+    if capture.live_id.is_some() {
+        remove_live_checkpoint(store_dir, &result_id);
     }
     read_result_path(&path)
 }
@@ -378,6 +563,13 @@ fn write_zeros(output: &mut File, length: u64) -> Result<(), String> {
 }
 
 pub fn read_result_path(path: &Path) -> Result<StoredResult, String> {
+    if path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value.ends_with(".live.json"))
+    {
+        return read_live_result(path);
+    }
     let mut file = File::open(path).map_err(|error| format!("open {}: {error}", path.display()))?;
     let file_length = file.metadata().map_err(|error| error.to_string())?.len();
     let mut magic = [0_u8; 8];
@@ -390,6 +582,57 @@ pub fn read_result_path(path: &Path) -> Result<StoredResult, String> {
         MAGIC_V4 => read_v4(path, file, file_length),
         _ => Err("corrupt result: bad magic".to_string()),
     }
+}
+
+fn read_live_result(path: &Path) -> Result<StoredResult, String> {
+    let bytes = crate::util::read_file_limited(path, MAX_METADATA_BYTES, "live checkpoint")?;
+    let manifest: LiveManifest = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("invalid live checkpoint: {error}"))?;
+    if manifest.schema != 1 {
+        return Err("unsupported live checkpoint schema".into());
+    }
+    for stream_path in [&manifest.stdout_path, &manifest.stderr_path] {
+        let valid_name = stream_path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .is_some_and(|value| value.starts_with(".pira_ctx-spool-"));
+        if !valid_name || stream_path.parent() != Some(std::env::temp_dir().as_path()) {
+            return Err("invalid live checkpoint stream path".into());
+        }
+    }
+    let stdout_length = fs::metadata(&manifest.stdout_path)
+        .map_err(|error| format!("open live stdout: {error}"))?
+        .len();
+    let stderr_length = fs::metadata(&manifest.stderr_path)
+        .map_err(|error| format!("open live stderr: {error}"))?
+        .len();
+    if manifest.metadata.stdout_bytes > stdout_length
+        || manifest.metadata.stderr_bytes > stderr_length
+    {
+        return Err("live checkpoint exceeds committed stream length".into());
+    }
+    validate_metadata(
+        &manifest.metadata,
+        manifest.metadata.stdout_bytes,
+        manifest.metadata.stderr_bytes,
+    )?;
+    Ok(StoredResult {
+        metadata: manifest.metadata,
+        path: path.to_path_buf(),
+        format_version: 0,
+        stdout_offset: 0,
+        stderr_offset: 0,
+        stdout_hash: None,
+        stderr_hash: None,
+        stdout_blocks: None,
+        stderr_blocks: None,
+        live: Some(LiveState {
+            generation: manifest.generation,
+            checkpoint_unix_ms: manifest.checkpoint_unix_ms,
+            stdout_path: manifest.stdout_path,
+            stderr_path: manifest.stderr_path,
+        }),
+    })
 }
 
 fn encode_line_index_v4(lines: &[crate::model::LineMeta]) -> Result<Vec<u8>, String> {
@@ -831,6 +1074,7 @@ fn read_v3(path: &Path, mut file: File, file_length: u64) -> Result<StoredResult
         stderr_hash: Some(stderr_hash),
         stdout_blocks: Some(stdout_blocks),
         stderr_blocks: Some(stderr_blocks),
+        live: None,
     })
 }
 
@@ -912,6 +1156,7 @@ fn read_v4(path: &Path, mut file: File, file_length: u64) -> Result<StoredResult
         stderr_hash: Some(stderr_hash),
         stdout_blocks: Some(stdout_blocks),
         stderr_blocks: Some(stderr_blocks),
+        live: None,
     })
 }
 
@@ -964,6 +1209,7 @@ fn read_v2(path: &Path, mut file: File, file_length: u64) -> Result<StoredResult
         stderr_hash: Some(stderr_hash),
         stdout_blocks: None,
         stderr_blocks: None,
+        live: None,
     })
 }
 
@@ -1010,6 +1256,7 @@ fn read_v1(path: &Path, mut file: File, file_length: u64) -> Result<StoredResult
         stderr_hash: None,
         stdout_blocks: None,
         stderr_blocks: None,
+        live: None,
     })
 }
 
@@ -1134,16 +1381,41 @@ pub fn scan_store(
         return Ok(Vec::new());
     }
     let indexes = store_dir.join("indexes");
-    if indexes.join(INDEX_COMPLETE).is_file() && !indexes_dirty(&indexes) {
-        return match read_indexes(&indexes, workspace_filter) {
+    let mut entries = if indexes.join(INDEX_COMPLETE).is_file() && !indexes_dirty(&indexes) {
+        match read_indexes(&indexes, workspace_filter) {
             Ok(entries) => Ok(entries),
             Err(_) => {
                 let _ = fs::remove_file(indexes.join(INDEX_COMPLETE));
                 scan_result_headers(store_dir, workspace_filter)
             }
-        };
-    }
-    scan_result_headers(store_dir, workspace_filter)
+        }?
+    } else {
+        scan_result_headers(store_dir, workspace_filter)?
+    };
+    entries.extend(scan_live_headers(store_dir, workspace_filter));
+    sort_entries(&mut entries);
+    Ok(entries)
+}
+
+fn scan_live_headers(store_dir: &Path, workspace_filter: Option<&str>) -> Vec<ListedEntry> {
+    let live_dir = store_dir.join("live");
+    let Ok(items) = fs::read_dir(live_dir) else {
+        return Vec::new();
+    };
+    items
+        .filter_map(Result::ok)
+        .filter_map(|item| {
+            let path = item.path();
+            let stored = read_result_path(&path).ok()?;
+            if workspace_filter.is_some_and(|filter| stored.metadata.workspace_hash != filter) {
+                return None;
+            }
+            let mut entry = ListedEntry::from_metadata(&stored.metadata, path);
+            entry.running = true;
+            entry.exit = 0;
+            Some(entry)
+        })
+        .collect()
 }
 
 fn scan_result_headers(
@@ -1319,8 +1591,9 @@ pub fn resolve_result(store_dir: &Path, target: &str) -> Result<PathBuf, String>
     if target == "--last" {
         let workspace = current_workspace_hash()?;
         return scan_store(store_dir, Some(&workspace))?
-            .first()
-            .map(|entry| entry.path.clone())
+            .into_iter()
+            .find(|entry| !entry.running)
+            .map(|entry| entry.path)
             .ok_or_else(|| "no stored pira_ctx result for current workspace".to_string());
     }
     let path = PathBuf::from(target);
@@ -1361,6 +1634,7 @@ pub fn prune_store(
 ) -> Result<PruneResult, String> {
     ensure_private_dir(store_dir)?;
     let mut entries = scan_store(store_dir, None)?;
+    entries.retain(|entry| !entry.running);
     entries.sort_by_key(|entry| entry.start_ms);
     let now = util::millis(SystemTime::now());
     let cutoff = max_age_days.map(|days| now.saturating_sub(days as u128 * 86_400_000));

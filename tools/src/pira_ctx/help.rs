@@ -42,6 +42,10 @@ indexed lines; override with PIRA_CTX_MAX_RETAINED_BYTES or PIRA_CTX_MAX_INDEXED
 2,000,000. Excess bytes are drained; commands continue without a pira_ctx timeout. Child status is
 preserved unless the wrapper itself fails with 125.
 
+After about 30 seconds, a running non-interactive PROGRAM gets a silent read-only checkpoint shown by
+list. Its explicit ID supports snapshot inspection without blocking; exec uses a private fixed copy.
+verify/forget reject it, prune skips it, and --last remains completed-only.
+
 Scope: --last, recap, stats without RESULT, and `forget events` use the current workspace (nearest
 Git root, otherwise current directory). list and prune cover all workspaces in the selected store
 unless an option narrows them. An explicit RESULT path bypasses store lookup. The store comes from
@@ -78,6 +82,10 @@ OUTPUT AND STORAGE
   controls force bounded retained rendering with a warning instead of direct automatic replay. Stored
   bytes remain authoritative up to the configured retention ceiling. Use capture when completed
   output must be persisted.
+
+  A PROGRAM active for about 30 seconds gets a silent read-only checkpoint visible in list.
+  Inspection uses a consistent snapshot without waiting for completion. Override the interval with
+  PIRA_CTX_LIVE_CHECKPOINT_MS (minimum 100 ms).
 
 EXIT STATUS
   Preserves the child status. Missing/non-executable commands use 127/126; wrapper failures use 125.
@@ -288,7 +296,9 @@ BINDINGS
   MSG_STDOUT_PATH     Private temporary exact-stdout path.
   MSG_STDERR_PATH     Private temporary exact-stderr path.
   MSG_ID              Resolved source capture ID.
-  MSG_EXIT            Source command exit code.
+  MSG_EXIT            Source command exit code, or None for a running checkpoint.
+  MSG_STATE           `running` or `complete`.
+  MSG_GENERATION      Live checkpoint generation, or 0 for a completed capture.
 
 BEHAVIOR
   --last resolves once before execution. Choose exactly one code source. Interpreter order is
@@ -296,7 +306,8 @@ BEHAVIOR
   other commands. MSG_BYTES and MSG eagerly load the complete merged capture into Python memory;
   materialization defaults to a 64 MiB ceiling controlled by PIRA_CTX_MAX_EXEC_BYTES. Prefer
   search/transform for larger inputs or raise the ceiling deliberately. Temporary paths exist only
-  during execution. Analysis code is limited to 1 MiB. Analysis status is preserved; retained
+  during execution. Running input is copied once before Python starts, so later PROGRAM writes
+  cannot change the analysis view or be changed by the analysis. Analysis code is limited to 1 MiB. Analysis status is preserved; retained
   analysis metadata links to the source ID through its command. Code runs with caller permissions
   and is not sandboxed.
 
@@ -330,9 +341,9 @@ USAGE
 
 OUTPUT
   Without RESULT, prints current-workspace capture count, captured bytes, event count, and workspace
-  hash. With RESULT, prints command, cwd, status, duration, stream sizes/lines, store path, format,
+  hash. With RESULT, prints command, cwd, state, status, duration, stream sizes/lines, store path, format,
   index state, binary/non-UTF-8 flags, detected paths, and suggested keywords. It does not print
-  captured content.
+  captured content. A running result reports unknown exit status, checkpoint generation, and age.
 
 EXAMPLES
   pira_ctx stats
@@ -346,7 +357,8 @@ USAGE
 BEHAVIOR
   Validates the container layout, authenticated metadata/index/block tables, and exact stdout/stderr
   hashes supported by its format. Prints the verified path on success and does not modify the capture.
-  Corruption, missing results, or wrapper failures use exit 125.
+  Running checkpoints have no final hashes and are rejected until PROGRAM exits. Corruption, missing
+  results, or wrapper failures use exit 125.
 
 EXAMPLE
   pira_ctx verify 20260712-052432"#;
@@ -357,8 +369,8 @@ USAGE
   pira_ctx list [--store-dir PATH] [--workspace current] [--limit N]
 
 OUTPUT
-  Prints up to 20 newest-first rows with ID, timestamp, exit status, bytes, lines, and redacted
-  command. --limit accepts 0..100. Without --workspace current, entries from every workspace in the
+  Prints up to 20 newest-first rows with ID, state, timestamp, exit status, bytes, lines, and redacted
+  command. Active checkpoints are marked running and use `-` as exit status. --limit accepts 0..100. Without --workspace current, entries from every workspace in the
   selected store are considered.
 
 EXAMPLE
@@ -370,7 +382,8 @@ USAGE
   pira_ctx prune [--store-dir PATH] [--max-age-days N] [--max-store-bytes N]
 
 BEHAVIOR
-  At least one limit is required. prune covers every workspace in the selected store. Captures whose
+  At least one limit is required. prune covers every workspace in the selected store and skips
+  running checkpoints. Completed captures whose
   start time is strictly older than N*24 hours are removed first; if remaining capture-container file
   bytes exceed the limit, oldest captures are removed until within budget. Age pruning also removes
   old event files across the store. Prints removed and remaining capture-file counts/bytes. Deletion
@@ -388,7 +401,7 @@ USAGE
 BEHAVIOR
   RESULT resolves using normal ID/prefix/filename/path rules. An explicit path bypasses store lookup
   and may identify a valid capture outside --store-dir. The target must pass capture structure and
-  integrity verification before removal. `events` is reserved here and removes only recap event
+  integrity verification before removal. Running captures are rejected. `events` is reserved here and removes only recap event
   files for the current workspace, not captures. Deletion is immediate; this operation is not
   transactional across filesystem failures. The removed path or event count is printed.
 
@@ -479,7 +492,7 @@ mod tests {
             assert!(text.contains("USAGE"), "missing usage for {topic}");
             assert!(text.len() < 3_500, "help too long for {topic}");
         }
-        assert!(GLOBAL.len() < 3_500);
+        assert!(GLOBAL.len() < 4_096);
         assert!(RAW.contains("prefer search, a narrow range, transform, or exec"));
     }
 }

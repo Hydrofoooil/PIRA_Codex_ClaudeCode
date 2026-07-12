@@ -115,6 +115,16 @@ pub struct CaptureResult {
     pub end_ms: u128,
     pub duration_ms: u128,
     pub cwd: String,
+    pub live_id: Option<String>,
+    pub live_store_dir: Option<PathBuf>,
+}
+
+impl Drop for CaptureResult {
+    fn drop(&mut self) {
+        if let (Some(store), Some(id)) = (&self.live_store_dir, &self.live_id) {
+            crate::storage::remove_live_checkpoint(store, id);
+        }
+    }
 }
 
 impl CaptureResult {
@@ -230,6 +240,12 @@ pub struct ListedEntry {
     pub command: String,
     pub path: PathBuf,
     pub workspace_hash: String,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub running: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 impl ListedEntry {
@@ -245,6 +261,7 @@ impl ListedEntry {
             command: util::redacted_argv_display(&metadata.command_argv),
             path,
             workspace_hash: metadata.workspace_hash.clone(),
+            running: false,
         }
     }
 }
