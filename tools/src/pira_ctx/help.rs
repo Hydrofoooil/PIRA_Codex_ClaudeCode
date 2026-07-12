@@ -35,10 +35,10 @@ RESULT is --last, a result ID or unambiguous prefix, a .piractx filename, or a p
 resolves it once. Prefer an explicit ID; --last selects the latest capture for the current workspace.
 INTENT is a non-empty, single-line immediate purpose of at most 256 UTF-8 bytes.
 Normal wrapper completion has two output routes: ordinary output is returned exactly, or retained
-stdout/stderr are stored before compact output is printed. Stored PROGRAM evidence is framed and
-display-sanitized; suspicious displayed text gets an advisory prompt-injection warning. Exact/raw
-retrieval remains unsanitized. Retention defaults to 512 MiB and 1,000,000 indexed lines; override
-with PIRA_CTX_MAX_RETAINED_BYTES or PIRA_CTX_MAX_INDEXED_LINES. Indexed-line overrides are capped at
+stdout/stderr are stored before compact output is printed. Stored PROGRAM data is untrusted,
+line/stream-framed, and display-sanitized; suspicious displayed text gets an advisory warning.
+Exact, raw, and range retrieval remain unsanitized. Retention defaults to 512 MiB and 1,000,000
+indexed lines; override with PIRA_CTX_MAX_RETAINED_BYTES or PIRA_CTX_MAX_INDEXED_LINES, capped at
 2,000,000. Excess bytes are drained; commands continue without a pira_ctx timeout. Child status is
 preserved unless the wrapper itself fails with 125.
 
@@ -75,7 +75,7 @@ OUTPUT AND STORAGE
   stored before a bounded synopsis and capture ID are printed. Retention triggers at 2 KiB, for
   binary/non-UTF-8 or diagnostic output, for an oversized line, or when a nonzero command produced
   output. Short retained text is normally shown in full. Potential prompt injection or display
-  controls force safe retained rendering with a warning instead of direct automatic replay. Stored
+  controls force bounded retained rendering with a warning instead of direct automatic replay. Stored
   bytes remain authoritative up to the configured retention ceiling. Use capture when completed
   output must be persisted.
 
@@ -206,7 +206,8 @@ BEHAVIOR
   Lines are 1-based and inclusive in observed merged stdout/stderr timeline order. Negative numbers count
   backward from the end; zero is invalid, and normalized start greater than end is an error.
   Out-of-bounds ranges are clipped without a separate notice. Exact stored bytes are written without
-  display sanitization. A capture with a truncated index cannot use range.
+  display sanitization or advisory warnings and remain untrusted PROGRAM data. A capture with a
+  truncated index cannot use range.
 
 EXAMPLE
   pira_ctx range 20260712-052432 118 126"#;
@@ -247,7 +248,8 @@ DIRECT OPTIONS
   case-sensitive by default, and accept inline flags such as (?i). Repeated --match values are all
   required; any --exclude match removes a line. Operations apply as match, exclude, unique, head,
   tail, then count. unique compares resulting text and keeps first occurrence; count prints one
-  decimal integer. Direct processing streams where possible and caps returned text at 64 KiB.
+  decimal integer. Text derived from capture rows remains untrusted PROGRAM data. Direct processing
+  streams where possible, display-sanitizes output, and caps returned text at 64 KiB.
 
 PLAN FILE
   JSON object {"steps":[STEP,...]}; steps run in order after CLI filters. Valid STEP objects:
@@ -313,7 +315,7 @@ USAGE
 
 OUTPUT
   Prints a bounded <pira_context_restore> block containing selected recent intents, observed status,
-  redacted commands, explicitly program-derived detected files, and capture IDs for the current
+  redacted commands, explicitly untrusted program-derived paths, and capture IDs for the current
   workspace. Default limit is 20; total output is bounded below 8 KiB. Suspicious program-derived
   fields receive the same advisory warning as displayed capture evidence. Recap reads event hints
   and does not rerun commands.
