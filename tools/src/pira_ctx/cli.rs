@@ -5,6 +5,9 @@ pub const USAGE: &str = crate::help::GLOBAL;
 pub const MAX_INTENT_BYTES: usize = 256;
 pub const MAX_KEYWORDS: usize = 16;
 pub const MAX_KEYWORD_BYTES: usize = 256;
+pub const MAX_SEARCH_CONTEXT: usize = 20;
+pub const MAX_QUERY_BYTES: usize = 4096;
+pub const MAX_TRANSFORM_PATTERNS: usize = 16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -193,13 +196,20 @@ fn parse_non_help(args: &[String]) -> Result<Config, String> {
             c.mode = Mode::List;
             let mut p = parse_store(&mut c, args, 1)?;
             while p < args.len() {
-                if args[p] != "--workspace"
-                    || args.get(p + 1).map(String::as_str) != Some("current")
-                {
-                    return Err(USAGE.into());
+                match args[p].as_str() {
+                    "--workspace" if args.get(p + 1).map(String::as_str) == Some("current") => {
+                        c.workspace_current = true;
+                        p += 2;
+                    }
+                    "--limit" => {
+                        p += 1;
+                        c.limit = parse_value(args, &mut p, "--limit")?;
+                        if c.limit > 100 {
+                            return Err("list --limit is capped at 100".into());
+                        }
+                    }
+                    _ => return Err(USAGE.into()),
                 }
-                c.workspace_current = true;
-                p += 2;
             }
         }
         "stats" | "verify" => {
@@ -456,6 +466,17 @@ fn parse_search(c: &mut Config, args: &[String]) -> Result<(), String> {
             _ => return Err(USAGE.into()),
         }
     }
+    let query = c.query.as_deref().unwrap_or_default();
+    if query.is_empty() || query.len() > MAX_QUERY_BYTES || query.chars().any(char::is_control) {
+        return Err(format!(
+            "search query must be non-empty, single-line, and at most {MAX_QUERY_BYTES} UTF-8 bytes"
+        ));
+    }
+    if c.context > MAX_SEARCH_CONTEXT {
+        return Err(format!(
+            "--context is limited to {MAX_SEARCH_CONTEXT} lines"
+        ));
+    }
     Ok(())
 }
 fn parse_raw(c: &mut Config, args: &[String]) -> Result<(), String> {
@@ -515,6 +536,23 @@ fn parse_transform(c: &mut Config, args: &[String]) -> Result<(), String> {
             }
             _ => return Err(USAGE.into()),
         }
+    }
+    if c.transform.matches.len() > MAX_TRANSFORM_PATTERNS
+        || c.transform.excludes.len() > MAX_TRANSFORM_PATTERNS
+    {
+        return Err(format!(
+            "transform accepts at most {MAX_TRANSFORM_PATTERNS} --match and --exclude patterns"
+        ));
+    }
+    if c.transform
+        .matches
+        .iter()
+        .chain(&c.transform.excludes)
+        .any(|pattern| pattern.len() > MAX_QUERY_BYTES)
+    {
+        return Err(format!(
+            "transform regex patterns are limited to {MAX_QUERY_BYTES} UTF-8 bytes"
+        ));
     }
     Ok(())
 }

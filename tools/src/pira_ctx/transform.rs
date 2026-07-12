@@ -1,16 +1,18 @@
-use std::collections::{BTreeMap, HashSet, VecDeque};
-use std::fs;
-
 use serde::Deserialize;
+use std::collections::{BTreeMap, HashSet, VecDeque};
 
 use crate::cli::TransformOptions;
 use crate::model::StreamKind;
 use crate::storage::StoredResult;
+use crate::util;
 
 const MAX_MATERIALIZED_ROWS: usize = 1_000_000;
 const MAX_MATERIALIZED_BYTES: usize = 128 * 1024 * 1024;
 const MAX_UNIQUE_VALUES: usize = 100_000;
 const MAX_RETURN_BYTES: usize = 64 * 1024 + 1;
+const MAX_PLAN_BYTES: u64 = 1024 * 1024;
+const MAX_PLAN_STEPS: usize = 64;
+const MAX_CONTEXT_ROWS: usize = 10_000;
 
 #[derive(Debug, Deserialize)]
 struct Plan {
@@ -104,8 +106,14 @@ pub fn run(store: &StoredResult, options: &TransformOptions) -> Result<Vec<Strin
         return Ok(vec![rows.len().to_string()]);
     }
     if let Some(path) = &options.plan {
-        let plan: Plan = serde_json::from_slice(&fs::read(path).map_err(|e| e.to_string())?)
-            .map_err(|e| format!("invalid transform plan: {e}"))?;
+        let bytes = util::read_file_limited(path, MAX_PLAN_BYTES, "transform plan")?;
+        let plan: Plan =
+            serde_json::from_slice(&bytes).map_err(|e| format!("invalid transform plan: {e}"))?;
+        if plan.steps.len() > MAX_PLAN_STEPS {
+            return Err(format!(
+                "transform plan is limited to {MAX_PLAN_STEPS} steps"
+            ));
+        }
         return apply(rows, &plan.steps);
     }
     Ok(rows.into_iter().map(|r| r.text).collect())
@@ -244,12 +252,19 @@ fn apply(mut rows: Vec<Row>, steps: &[Step]) -> Result<Vec<String>, String> {
                 before,
                 after,
             } => {
+                if *before > MAX_CONTEXT_ROWS || *after > MAX_CONTEXT_ROWS {
+                    return Err(format!(
+                        "transform context before/after are limited to {MAX_CONTEXT_ROWS} rows"
+                    ));
+                }
                 let re = regex::Regex::new(regex).map_err(|e| format!("invalid regex: {e}"))?;
                 let mut keep = HashSet::new();
                 for (index, row) in rows.iter().enumerate() {
                     if re.is_match(&row.text) {
                         for selected in index.saturating_sub(*before)
-                            ..=(index + *after).min(rows.len().saturating_sub(1))
+                            ..=index
+                                .saturating_add(*after)
+                                .min(rows.len().saturating_sub(1))
                         {
                             keep.insert(selected);
                         }

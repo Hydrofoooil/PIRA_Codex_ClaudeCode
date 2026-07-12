@@ -1,9 +1,10 @@
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
+use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub const BROKEN_PIPE: &str = "__PIRA_CTX_BROKEN_PIPE__";
 pub const MAX_DISPLAY_READ_BYTES: u64 = 64 * 1024;
-pub const MAX_SEARCH_LINE_BYTES: u64 = 8 * 1024 * 1024;
+pub const MAX_SEARCH_LINE_BYTES: u64 = 128 * 1024;
 const DISPLAY_CLIP_BYTES: usize = 1200;
 
 pub struct BoundedStdout {
@@ -52,6 +53,22 @@ pub fn io_error(error: io::Error) -> String {
     } else {
         error.to_string()
     }
+}
+
+pub fn read_file_limited(path: &Path, maximum: u64, label: &str) -> Result<Vec<u8>, String> {
+    let file = std::fs::File::open(path)
+        .map_err(|error| format!("open {label} {}: {error}", path.display()))?;
+    let mut bytes = Vec::new();
+    file.take(maximum.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("read {label} {}: {error}", path.display()))?;
+    if bytes.len() as u64 > maximum {
+        return Err(format!(
+            "{label} {} exceeds the {maximum}-byte limit",
+            path.display()
+        ));
+    }
+    Ok(bytes)
 }
 
 pub fn stdout_line(text: &str) -> Result<(), String> {
@@ -220,6 +237,7 @@ fn shellish_quote(value: &str) -> String {
     }
 }
 
+#[cfg(test)]
 pub fn unicode_contains_ci(haystack: &str, needle: &str) -> bool {
     haystack.to_lowercase().contains(&needle.to_lowercase())
 }
@@ -253,9 +271,19 @@ pub fn sanitize_terminal(value: &str) -> String {
                 }
                 None => {}
             }
-        } else if character == '\r' {
+        } else if matches!(character, '\r' | '\u{0085}' | '\u{2028}' | '\u{2029}') {
             // Carriage returns can rewrite terminal output; render them as line boundaries.
             output.push(' ');
+        } else if matches!(
+            character,
+            '\u{061c}'
+                | '\u{200b}'..='\u{200f}'
+                | '\u{202a}'..='\u{202e}'
+                | '\u{2066}'..='\u{2069}'
+                | '\u{feff}'
+        ) {
+            // Remove invisible and bidirectional formatting that can visually
+            // reorder or disguise untrusted program output.
         } else if character.is_control() && !matches!(character, '\n' | '\t') {
             // Suppress terminal controls while retaining readable whitespace.
         } else {

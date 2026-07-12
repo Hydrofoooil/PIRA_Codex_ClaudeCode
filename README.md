@@ -1,16 +1,16 @@
 # PIRA — PI Research Assistant
 
-PIRA (pronounced "Pyra") is the public-facing name of PI: a plain-text, research-oriented personal agent for reasoning, writing, coding, learning, and practical problem-solving.
+PIRA (pronounced "Pyra") is a research-oriented personal agent for reasoning, writing, coding, learning, and practical problem-solving.
 
-PIRA is designed to be warm, honest about uncertainty, evidence-first when evidence matters, and lightweight enough to inspect and customize.
+PIRA is designed to be warm, honest about uncertainty, evidence-first when evidence matters, and easy to inspect and customize.
 
 ## Tested compatibility
 
-PIRA has been tested extensively with **Codex using GPT-5.4, GPT-5.5, and 5.6-sol, each with high reasoning effort**.
+PIRA has been tested extensively with **Codex on GPT-5.4, GPT-5.5, and 5.6-sol, each with high reasoning effort**.
 
 ## Quick start
 
-PIRA's default install lives at `~/agent`. The setup script is idempotent, backs up user-level Codex files before editing them, supports dry-run/verify modes, and is safe to rerun on an existing install. You need Git; the setup wrapper handles Python discovery and can offer platform-specific Python install help.
+PIRA installs to `~/agent` by default. Setup is idempotent, backs up user-level Codex files before editing them, supports dry-run and verification modes, and is safe to rerun. Git is required; the setup wrapper handles Python discovery and can offer platform-specific installation help.
 
 ### Recommended one-line install or update
 
@@ -19,6 +19,7 @@ This command:
 - enables **soft-safe** mode;
 - keeps audio notifications **off**;
 - links PIRA into Codex;
+- installs or refreshes bundled PIRA tools such as `pira_ctx` in the user's `PATH`;
 - moves old PIRA-managed legacy files into backup;
 - creates a private `USER.md` placeholder only if `USER.md` is missing.
 
@@ -64,7 +65,7 @@ assets/scripts/setup_pira.sh
 assets/scripts/setup_pira.sh --verify
 ```
 
-On Windows, run the same setup through `assets/scripts/setup_pira.ps1` from the repository directory:
+On Windows, invoke the same setup through `assets/scripts/setup_pira.ps1` from the repository directory:
 
 ```powershell
 powershell.exe -ExecutionPolicy Bypass -File assets/scripts/setup_pira.ps1
@@ -73,6 +74,9 @@ powershell.exe -ExecutionPolicy Bypass -File assets/scripts/setup_pira.ps1
 Both platform wrappers forward the same options to `assets/scripts/setup_pira.py`. They share the Python bootstrap helpers in `assets/scripts/lib/`; setup can offer to install Python with Homebrew on macOS or winget on Windows.
 
 ## Setup options
+
+<details>
+<summary>Execution, user configuration, and tool-install options</summary>
 
 The script asks before sensitive choices in interactive mode. For unattended setup, pass explicit flags.
 
@@ -130,7 +134,12 @@ py -3 assets/scripts/setup_pira_tools.py --verify # verify without writing
 
 Use `--force` to reinstall even when the installed hash already matches the bundled release. Use `--install-dir PATH` to override the tools-only default (`~/.local/bin` on macOS/Linux or `%LOCALAPPDATA%\PIRA\bin` on Windows), and `--no-path` when PATH persistence is managed separately. Restart the shell or agent process if setup reports that PATH changes are not yet active.
 
+</details>
+
 ## What setup changes
+
+<details>
+<summary>Files, settings, tools, and verification performed by setup</summary>
 
 The setup script:
 
@@ -145,19 +154,35 @@ The setup script:
 
 If setup cannot safely handle an existing conflicting file or Codex setting, it stops or skips that action with a warning instead of silently overwriting it.
 
+</details>
+
 ## `pira_ctx`: lightweight command context
 
-`pira_ctx` keeps large command output from overwhelming the model context without discarding the original data. Its default behavior is simple:
+<details>
+<summary>How it works, security design, Context Mode comparison, and benchmarks</summary>
+
+`pira_ctx` keeps large command output from overwhelming active context while retaining it locally within configurable space limits. Automatic mode is the default and its name can be omitted:
 
 1. Ordinary short output is returned directly.
 2. Long or diagnostic output is stored locally, while the model receives a bounded extractive synopsis and a capture ID.
-3. If more detail is needed, the complete capture remains available for targeted search, line-range retrieval, transformation, or exact replay.
+3. If more detail is needed, the retained capture remains available for targeted search, line-range retrieval, transformation, or exact replay.
 
-For compile, test, lint, or other validation jobs where only success or failure matters, `check` stores the complete log but prints one PASS/FAIL status line with the child exit code and capture ID.
+For compile, test, lint, or other validation jobs where only success or failure matters, `check` stores the retained log but prints one PASS/FAIL status line with the child exit code and capture ID.
 
-Explicit `exact` mode streams unchanged when attached to a terminal. In non-interactive agent calls it buffers the result so that long, highly repetitive logs can be auto-switched to a retained summary instead of flooding context; genuinely varied output remains exact, and every switched response announces the decision.
+Explicit `exact` mode streams unchanged when attached to a terminal. In non-interactive calls it buffers the result so that highly repetitive output—or output exceeding retention or indexing bounds—can switch to a retained report instead of flooding or silently truncating context. Genuinely varied output remains exact, and every switch is announced.
 
-Setup installs a verified native executable in the user's `PATH`. Normal use requires no Python, Rust toolchain, daemon, database, network service, or model call; the optional `exec` command uses an available Python 3 interpreter to analyze a stored capture with explicit code. Captures are private user-cache files with independently compressed blocks and integrity hashes. `pira_ctx` preserves the caller's permissions and does not sandbox commands. Run `pira_ctx --help` to choose a command and `pira_ctx SUBCOMMAND --help` for exact usage. The Rust source is under `tools/src`, and verified builds for macOS arm64/x64, Linux arm64/x64, and Windows x64 are under `tools/dist/pira_ctx`.
+Setup installs a verified native executable in the user's `PATH`. Normal use requires no Python, Rust toolchain, daemon, database, network service, or model call; the optional `exec` command uses an available Python 3 interpreter to analyze a stored capture with explicit code. Captures are private user-cache files with independently compressed blocks and integrity hashes. `pira_ctx` preserves the caller's permissions and does not sandbox commands. Run `pira_ctx --help` to choose a command and `pira_ctx SUBCOMMAND --help` for exact usage. Its Rust source is under `tools/src/pira_ctx`, and verified builds for macOS arm64/x64, Linux arm64/x64, and Windows x64 are under `tools/dist/pira_ctx`.
+
+### Security design
+
+`pira_ctx` treats PROGRAM output as untrusted data, but it is not a sandbox and does not make the wrapped program safe. Its security boundary covers harm introduced by capturing, storing, selecting, or displaying PROGRAM output:
+
+- **Injection-aware display.** Agent-facing evidence uses trusted line and stream prefixes. Terminal escapes, Unicode line separators, bidirectional overrides, and invisible direction controls are sanitized so output cannot forge report structure or manipulate normal automatic display. A bounded heuristic scans only content about to enter context, including instructions split across displayed lines. When triggered, one warning appears before the evidence: the content might be malicious and should not be blindly followed. Detection never suppresses or re-ranks evidence, and benign output pays no warning-token cost.
+- **Explicit exactness.** Automatic mode safely retains suspicious short output instead of replaying it directly. `search` applies the same warning. Byte-replay paths in `exact` and `raw` remain unsanitized because their purpose is exact recovery.
+- **Bounded space, unbounded time.** Retention defaults to 512 MiB and 1,000,000 indexed lines, with a 2,000,000-line hard ceiling, while eager Python `exec` materialization defaults to 64 MiB. These ceilings are configurable within their safety bounds. Excess output is drained but not retained, and the command continues. `pira_ctx` imposes no runtime timeout or time-based termination, leaving cancellation to the agent or user.
+- **Private, checked storage.** Captures use private user-cache files, independently compressed and SHA-256-checked blocks, validated offsets and lengths, and authenticated metadata/index tables. Common secret-bearing command arguments are redacted from metadata, and result IDs do not derive from raw arguments. Output may still contain secrets, and integrity hashes detect corruption rather than authenticate data against a same-user attacker.
+
+Security checks are separate from ordinary functional tests and run as fixed, non-destructive fixtures in a deny-by-default sandbox with deliberately tiny configurable limits. On 45 held-out benign real logs, the injection heuristic produced no warnings, added a median of 8 response bytes, and had no measurable median runtime cost. This is best-effort hardening, not a guarantee that every adversarial instruction will be detected.
 
 ### Relationship to Context Mode
 
@@ -171,11 +196,11 @@ Setup installs a verified native executable in the user's `PATH`. Normal use req
 | Continuity | Bounded same-session recap after compaction | Explicit session lifecycle and continuation support |
 | Safety scope | Preserves caller permissions; does not sandbox children | Adds sandbox and permission-policy integration |
 
-PIRA uses `pira_ctx` when a small dependency-free command wrapper and exact local fallback are preferable. Context Mode is the more comprehensive option when broader interception, hooks, sandboxing, or database-backed retrieval are needed.
+PIRA uses `pira_ctx` when a small single-binary wrapper and exact local fallback are preferable. Context Mode is the more comprehensive option when broader interception, hooks, sandboxing, or database-backed retrieval are needed.
 
 ### Comprehensive held-out benchmark
 
-The benchmarked `pira_ctx 0.5.2` source and release artifacts were frozen before collecting or importing held-out output. The final benchmark caps each category at five cases and contains **45 sanitized responses across ten categories**. The optional Python-backed `exec` command added in 0.6.0 is outside this benchmark:
+The benchmarked `pira_ctx 0.5.2` source and release artifacts were frozen before collecting or importing held-out output. The final benchmark caps each category at five cases and contains **45 sanitized responses across ten categories**. These figures characterize the frozen 0.5.2 path; the optional Python-backed `exec` command added in 0.6.0 and the PIRACTX4 storage changes in 0.7.0 are outside this benchmark:
 
 | Suite | Cases | Holdout source |
 |---|---:|---|
@@ -234,7 +259,12 @@ This remains a private implementation benchmark on one arm64 macOS evaluation ho
 
 </details>
 
+</details>
+
 ## Optional Codex audio notifications
+
+<details>
+<summary>Behavior, customization, and manual installation</summary>
 
 Audio notifications are optional and are supported only for **Codex on macOS or Windows**. They are off by default and should not be presented as supported for Claude Code, other agent tools, Linux, or other systems.
 
@@ -279,6 +309,8 @@ If `config.toml` already has a top-level `notify` entry, inspect it first and re
 
 Keep `notify` at the top level of `config.toml`, before any `[section]` table, so it is not accidentally parsed as part of a nested table.
 
+</details>
+
 ## What PIRA is for
 
 PIRA is meant to help with work that benefits from both care and rigor:
@@ -303,13 +335,16 @@ PIRA is built around a few simple commitments:
 
 PIRA is intentionally minimal:
 
-- **Plain-text controlled.** Behavior is defined in readable Markdown files, so it is easy to inspect, edit, and customize.
+- **Inspectable.** Behavior is organized in readable policy and module files that are easy to review and customize.
 - **Lightweight.** Token overhead stays low; there is no heavy framework or rarely used abstraction layer.
-- **Research-oriented.** The default workflows emphasize reasoning, writing, coding, evidence gathering, and careful iteration.
-- **Lean by default.** The coding style incorporates useful minimalism principles from [Ponytail](https://github.com/DietrichGebert/ponytail) and general, non-language-specific lessons from Robert C. Martin's *Clean Code* and *Clean Architecture*: prefer deletion, standard-library or platform features, the smallest safe implementation, readable names, behavior-preserving refactors, and clear boundaries over speculative code or architecture ceremony.
-- **Tool-friendly.** Because the system is simple and text-based, it works naturally with official tools such as Codex.
+- **Research-oriented.** Default workflows emphasize reasoning, writing, coding, evidence gathering, and careful iteration.
+- **Lean by default.** Drawing on [Ponytail](https://github.com/DietrichGebert/ponytail) and general lessons from *Clean Code* and *Clean Architecture*, the coding style favors deletion, standard-library or platform features, the smallest safe implementation, readable names, and clear boundaries over speculative abstractions.
+- **Tool-friendly.** The small, explicit design integrates naturally with official tools such as Codex.
 
 ## Safety model
+
+<details>
+<summary>Permission boundaries and operating rules</summary>
 
 PIRA can run in soft-safe full-permission mode, but it is not a sandbox. Its safety depends on explicit operating rules in `TOOLS.md`, including:
 
@@ -320,7 +355,12 @@ PIRA can run in soft-safe full-permission mode, but it is not a sandbox. Its saf
 
 Subagents should load the same bootstrap policy as the main agent. This is handled by Codex but has not been tested on other agents.
 
+</details>
+
 ## Repository layout
+
+<details>
+<summary>Source, policy, setup, and bundled-tool files</summary>
 
 - `AGENTS.md` — bootstrap instructions and module routing policy
 - `SOUL.md` — PI's identity, tone, and non-negotiable behaviors
@@ -329,11 +369,16 @@ Subagents should load the same bootstrap policy as the main agent. This is handl
 - `modules/` — optional task-specific modules for research, coding, writing, learning, guidance, and maintenance
 - `assets/scripts/` — setup and helper scripts
 - `tools/build/build_pira_ctx_platform_bins.py` — pinned, reproducibility-checking multi-platform release builder
-- `tools/src/` — public Rust implementation of `pira_ctx`
+- `tools/src/pira_ctx/` — public Rust implementation of `pira_ctx`; future tools use separate source directories
 - `tools/dist/pira_ctx/` — verified prebuilt `pira_ctx` executables and bundle manifest
 - `PIRA_Voice/Samantha/` — default audio clips for optional Codex notifications
 
+</details>
+
 ## Public/private split
+
+<details>
+<summary>What belongs in the public repository and what stays local</summary>
 
 The public repository contains the shared policy framework. Personal context should stay local:
 
@@ -341,9 +386,11 @@ The public repository contains the shared policy framework. Personal context sho
 - keep workspace-specific memory in local `AGENT_WORKBOOK.md` files;
 - do not commit secrets or sensitive personal information.
 
+</details>
+
 ## Why the name PIRA
 
-PIRA stands for PI Research Assistant. It preserves the identity of PI while giving the project a clearer public-facing name.
+PIRA stands for PI Research Assistant, giving PI a clear public-facing project name.
 
 ## Acknowledgement and citation
 
@@ -351,7 +398,7 @@ If PIRA materially assists a research project, disclose that assistance where ap
 
 Suggested disclosure text:
 
-> This paper was assisted by PIRA~\citep{pira}, a research-assistant agent powered by {concrete model series, such as GPT 5.5}. The assistance included [brainstorming / implementation assistance / writing polish / ...]. The authors are fully responsible for the presented final content.
+> This paper was assisted by PIRA~\citep{pira}, a research-assistant agent powered by {the model used, such as GPT-5.5}. The assistance included [brainstorming / implementation assistance / writing polish / ...]. The authors are fully responsible for the final content.
 
 Suggested BibTeX entry:
 

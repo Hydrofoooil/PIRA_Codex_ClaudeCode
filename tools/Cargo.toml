@@ -1,6 +1,6 @@
 [package]
 name = "pira_ctx"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2024"
 description = "Lightweight command-output capture, synopsis, and retrieval for PIRA agents"
 license = "Apache-2.0"
@@ -19,6 +19,9 @@ lto = "thin"
 codegen-units = 1
 panic = "abort"
 
+[lib]
+path = "src/pira_ctx/lib.rs"
+
 [[bin]]
 name = "pira_ctx"
-path = "src/bin/pira_ctx.rs"
+path = "src/pira_ctx/main.rs"

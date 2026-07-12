@@ -4,6 +4,7 @@ use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+use sha2::Digest;
 
 use crate::util;
 
@@ -34,13 +35,60 @@ pub struct LineMeta {
     #[serde(default)]
     pub score: i64,
     #[serde(default)]
-    pub reasons: Vec<String>,
+    pub flags: u32,
+}
+
+pub mod line_flag {
+    pub const FAILURE: u32 = 1 << 0;
+    pub const SUCCESS: u32 = 1 << 1;
+    pub const SUCCESSFUL_CHECK: u32 = 1 << 2;
+    pub const DIFF: u32 = 1 << 3;
+    pub const ERROR: u32 = 1 << 4;
+    pub const FAILED_TEST: u32 = 1 << 5;
+    pub const WARNING: u32 = 1 << 6;
+    pub const NOTE: u32 = 1 << 7;
+    pub const KEYWORD: u32 = 1 << 8;
+    pub const PATH: u32 = 1 << 9;
+    pub const METRIC: u32 = 1 << 10;
+    pub const MARKER: u32 = 1 << 11;
+    pub const STACK: u32 = 1 << 12;
+    pub const STDERR: u32 = 1 << 13;
+    pub const POSITION: u32 = 1 << 14;
+    pub const NONZERO_TAIL: u32 = 1 << 15;
+    pub const NUMERIC_ANOMALY: u32 = 1 << 16;
+    pub const INFORMATIVE: u32 = 1 << 17;
+
+    pub const HIGH_CONFIDENCE: u32 =
+        FAILURE | SUCCESS | ERROR | FAILED_TEST | WARNING | NUMERIC_ANOMALY;
+    pub const STABLE_TEMPLATE: u32 = FAILURE
+        | SUCCESS
+        | SUCCESSFUL_CHECK
+        | DIFF
+        | ERROR
+        | FAILED_TEST
+        | WARNING
+        | NOTE
+        | KEYWORD
+        | PATH
+        | METRIC
+        | MARKER
+        | STACK
+        | STDERR
+        | NONZERO_TAIL
+        | NUMERIC_ANOMALY;
+}
+
+impl LineMeta {
+    pub fn has(&self, flag: u32) -> bool {
+        self.flags & flag != 0
+    }
 }
 
 #[derive(Debug)]
 pub struct TempSpool {
     pub path: PathBuf,
     pub length: u64,
+    pub observed_length: u64,
     pub sha256: [u8; 32],
     pub binary: bool,
     pub non_utf8: bool,
@@ -61,6 +109,7 @@ pub struct CaptureResult {
     pub stdout_lines: usize,
     pub stderr_lines: usize,
     pub timeline_truncated: bool,
+    pub retention_truncated: bool,
     pub exit_code: i32,
     pub start_ms: u128,
     pub end_ms: u128,
@@ -71,6 +120,12 @@ pub struct CaptureResult {
 impl CaptureResult {
     pub fn total_bytes(&self) -> u64 {
         self.stdout.length.saturating_add(self.stderr.length)
+    }
+
+    pub fn observed_bytes(&self) -> u64 {
+        self.stdout
+            .observed_length
+            .saturating_add(self.stderr.observed_length)
     }
 
     pub fn readers(&self) -> Result<StreamReaders, String> {
@@ -111,6 +166,14 @@ pub struct Metadata {
     pub stderr_bytes: u64,
     #[serde(default)]
     pub total_bytes: u64,
+    #[serde(default)]
+    pub observed_stdout_bytes: u64,
+    #[serde(default)]
+    pub observed_stderr_bytes: u64,
+    #[serde(default)]
+    pub observed_total_bytes: u64,
+    #[serde(default)]
+    pub retention_truncated: bool,
     #[serde(default)]
     pub stdout_lines: usize,
     #[serde(default)]
@@ -199,6 +262,7 @@ pub struct BlockDescriptor {
     pub uncompressed_length: u64,
     pub stored_length: u64,
     pub payload_offset: u64,
+    pub content_sha256: Option<[u8; 32]>,
 }
 
 #[derive(Debug)]
@@ -270,6 +334,11 @@ impl StreamReaders {
     pub fn read_display_line(&mut self, line: &LineMeta) -> Result<String, String> {
         let bytes = self.read_bounded(line, util::MAX_DISPLAY_READ_BYTES)?;
         Ok(util::sanitize_terminal(&String::from_utf8_lossy(&bytes)))
+    }
+
+    pub fn read_security_line(&mut self, line: &LineMeta) -> Result<String, String> {
+        let bytes = self.read_bounded(line, util::MAX_DISPLAY_READ_BYTES)?;
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
 
     pub fn read_search_line(&mut self, line: &LineMeta) -> Result<String, String> {
@@ -381,6 +450,11 @@ impl SectionReader {
                             .map_err(|e| format!("lz4 decode: {e}"))?,
                             _ => return Err("unsupported block codec".into()),
                         };
+                        if b.content_sha256.is_some_and(|expected| {
+                            <[u8; 32]>::from(sha2::Sha256::digest(&decoded)) != expected
+                        }) {
+                            return Err("corrupt result: block checksum mismatch".into());
+                        }
                         *cache = Some((index, decoded));
                     }
                     let data = &cache.as_ref().unwrap().1;

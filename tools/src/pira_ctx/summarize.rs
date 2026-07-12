@@ -1,8 +1,8 @@
 use std::cmp::Reverse;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::sync::OnceLock;
 
-use crate::model::{CaptureResult, LineMeta, StreamKind};
+use crate::model::{CaptureResult, LineMeta, StreamKind, line_flag};
 use crate::util;
 
 pub fn score_timeline(capture: &mut CaptureResult, keywords: &[String]) -> Result<(), String> {
@@ -10,7 +10,7 @@ pub fn score_timeline(capture: &mut CaptureResult, keywords: &[String]) -> Resul
     let mut readers = capture.readers()?;
     for line in &mut capture.timeline {
         let clean = readers.read_display_line(line)?;
-        let (score, reasons) = score_line(
+        let (score, flags) = score_line(
             &clean,
             line.stream,
             line.line,
@@ -19,10 +19,10 @@ pub fn score_timeline(capture: &mut CaptureResult, keywords: &[String]) -> Resul
             keywords,
         );
         line.score = score;
-        line.reasons = reasons;
+        line.flags = flags;
     }
-    let base_scores: Vec<i64> = capture.timeline.iter().map(|line| line.score).collect();
-    for (index, &base_score) in base_scores.iter().enumerate() {
+    for index in 0..capture.timeline.len() {
+        let base_score = capture.timeline[index].score;
         if base_score < 100 {
             continue;
         }
@@ -35,9 +35,6 @@ pub fn score_timeline(capture: &mut CaptureResult, keywords: &[String]) -> Resul
                 && capture.timeline[nearby].score < base_score
             {
                 capture.timeline[nearby].score += 10;
-                capture.timeline[nearby]
-                    .reasons
-                    .push("adjacent diagnostic context".to_string());
             }
         }
     }
@@ -50,18 +47,12 @@ pub fn select_important(lines: &[LineMeta], maximum: usize) -> Vec<usize> {
     }
     let mut selected = Vec::new();
     let mut selected_set = HashSet::new();
-    let has_failure = lines.iter().any(|line| {
-        line.reasons
-            .iter()
-            .any(|reason| reason == "outcome/failure")
-    });
+    let has_failure = lines.iter().any(|line| line.has(line_flag::FAILURE));
     let failure_budget = maximum.div_ceil(2);
-    for index in (0..lines.len()).rev().filter(|&index| {
-        lines[index]
-            .reasons
-            .iter()
-            .any(|reason| reason == "outcome/failure")
-    }) {
+    for index in (0..lines.len())
+        .rev()
+        .filter(|&index| lines[index].has(line_flag::FAILURE))
+    {
         for nearby in [index.checked_sub(1), Some(index), index.checked_add(1)] {
             if selected.len() >= failure_budget {
                 break;
@@ -77,73 +68,47 @@ pub fn select_important(lines: &[LineMeta], maximum: usize) -> Vec<usize> {
         }
     }
     if !has_failure {
-        let latest_outcome = lines.iter().rposition(|line| {
-            line.reasons
-                .iter()
-                .any(|reason| reason == "outcome/success")
-        });
-        let latest_check = lines.iter().rposition(|line| {
-            line.reasons
-                .iter()
-                .any(|reason| reason == "successful check")
-        });
+        let latest_outcome = lines.iter().rposition(|line| line.has(line_flag::SUCCESS));
+        let latest_check = lines
+            .iter()
+            .rposition(|line| line.has(line_flag::SUCCESSFUL_CHECK));
         if let Some(index) = latest_outcome.or(latest_check) {
             selected_set.insert(index);
             selected.push(index);
         }
     }
-    let mut order: Vec<usize> = (0..lines.len()).collect();
-    order.sort_by_key(|&index| (Reverse(lines[index].score), lines[index].line));
-    let mut templates: HashMap<String, usize> = HashMap::new();
+    let mut templates: HashMap<(StreamKind, u32), usize> = HashMap::new();
     let mut successful_checks = selected
         .iter()
-        .filter(|&&index| {
-            lines[index]
-                .reasons
-                .iter()
-                .any(|reason| reason == "successful check")
-        })
+        .filter(|&&index| lines[index].has(line_flag::SUCCESSFUL_CHECK))
         .count();
-    for index in order {
-        if selected.len() >= maximum {
-            break;
-        }
-        if !selected_set.insert(index) {
-            continue;
-        }
-        if has_failure
-            && lines[index]
-                .reasons
-                .iter()
-                .any(|reason| reason == "outcome/success")
-        {
-            continue;
-        }
-        if lines[index]
-            .reasons
-            .iter()
-            .any(|reason| reason == "successful check")
-        {
-            if successful_checks >= 2 {
+    while selected.len() < maximum {
+        let mut best = None;
+        for (index, line) in lines.iter().enumerate() {
+            if selected_set.contains(&index) || (has_failure && line.has(line_flag::SUCCESS)) {
                 continue;
             }
+            if line.has(line_flag::SUCCESSFUL_CHECK) && successful_checks >= 2 {
+                continue;
+            }
+            let template = reason_template(line);
+            let limit = if line.has(line_flag::ERROR) { 3 } else { 2 };
+            if templates.get(&template).copied().unwrap_or(0) >= limit {
+                continue;
+            }
+            if best.is_none_or(|current: usize| {
+                (line.score, Reverse(line.line))
+                    > (lines[current].score, Reverse(lines[current].line))
+            }) {
+                best = Some(index);
+            }
+        }
+        let Some(index) = best else { break };
+        selected_set.insert(index);
+        if lines[index].has(line_flag::SUCCESSFUL_CHECK) {
             successful_checks += 1;
         }
-        let template = reason_template(&lines[index]);
-        let repetitions = templates.entry(template).or_default();
-        let repetition_limit = if lines[index]
-            .reasons
-            .iter()
-            .any(|reason| reason == "severity/error")
-        {
-            3
-        } else {
-            2
-        };
-        if *repetitions >= repetition_limit {
-            continue;
-        }
-        *repetitions += 1;
+        *templates.entry(reason_template(&lines[index])).or_default() += 1;
         selected.push(index);
     }
     selected.sort_by_key(|&index| lines[index].line);
@@ -151,34 +116,31 @@ pub fn select_important(lines: &[LineMeta], maximum: usize) -> Vec<usize> {
 }
 
 pub fn has_high_confidence_signal(lines: &[LineMeta]) -> bool {
-    lines.iter().any(|line| {
-        line.reasons.iter().any(|reason| {
-            matches!(
-                reason.as_str(),
-                "outcome/failure"
-                    | "outcome/success"
-                    | "severity/error"
-                    | "failed test"
-                    | "warning"
-                    | "numeric anomaly"
-            )
-        })
-    })
+    lines
+        .iter()
+        .any(|line| line.has(line_flag::HIGH_CONFIDENCE))
 }
 
 pub fn representative_groups(
     capture: &CaptureResult,
     maximum: usize,
 ) -> Result<Vec<(usize, String)>, String> {
-    let number = regex::Regex::new(r"\b\d+(?:\.\d+)?\b").unwrap();
-    let timestamp = regex::Regex::new(
-        r"\b\d{2,4}[-/:T]\d{1,2}[-/:T]\d{1,2}(?:[T ]\d{1,2}:\d{2}:\d{2}(?:\.\d+)?)?\b",
-    )
-    .unwrap();
-    let identifier = regex::Regex::new(r"\b[0-9a-fA-F]{8,}\b").unwrap();
+    const MAX_GROUP_SAMPLES: usize = 50_000;
+    static NUMBER: OnceLock<regex::Regex> = OnceLock::new();
+    static TIMESTAMP: OnceLock<regex::Regex> = OnceLock::new();
+    static IDENTIFIER: OnceLock<regex::Regex> = OnceLock::new();
+    let number = NUMBER.get_or_init(|| regex::Regex::new(r"\b\d+(?:\.\d+)?\b").unwrap());
+    let timestamp = TIMESTAMP.get_or_init(|| {
+        regex::Regex::new(
+            r"\b\d{2,4}[-/:T]\d{1,2}[-/:T]\d{1,2}(?:[T ]\d{1,2}:\d{2}:\d{2}(?:\.\d+)?)?\b",
+        )
+        .unwrap()
+    });
+    let identifier = IDENTIFIER.get_or_init(|| regex::Regex::new(r"\b[0-9a-fA-F]{8,}\b").unwrap());
     let mut reader = capture.readers()?;
     let mut groups: HashMap<String, (usize, String)> = HashMap::new();
-    for line in &capture.timeline {
+    let stride = capture.timeline.len().div_ceil(MAX_GROUP_SAMPLES).max(1);
+    for line in capture.timeline.iter().step_by(stride) {
         let text = reader.read_display_line(line)?;
         let trimmed = text.trim();
         if trimmed.is_empty() {
@@ -201,24 +163,32 @@ pub fn representative_groups(
     Ok(values)
 }
 
-fn reason_template(line: &LineMeta) -> String {
-    let mut stable_reasons: Vec<&str> = line
-        .reasons
-        .iter()
-        .map(String::as_str)
-        .filter(|reason| !reason.starts_with("position+") && *reason != "informativeness")
-        .collect();
-    stable_reasons.sort_unstable();
-    format!("{}:{}", line.stream, stable_reasons.join("+"))
+fn reason_template(line: &LineMeta) -> (StreamKind, u32) {
+    (line.stream, line.flags & line_flag::STABLE_TEMPLATE)
+}
+
+fn top_indices<'a>(
+    lines: impl Iterator<Item = (usize, &'a LineMeta)>,
+    maximum: usize,
+) -> Vec<usize> {
+    let mut heap = BinaryHeap::with_capacity(maximum.saturating_add(1));
+    for (index, line) in lines {
+        heap.push((Reverse(line.score), line.line, index));
+        if heap.len() > maximum {
+            heap.pop();
+        }
+    }
+    let mut selected = heap.into_vec();
+    selected.sort_by(|a, b| b.0.0.cmp(&a.0.0).then_with(|| a.1.cmp(&b.1)));
+    selected.into_iter().map(|(_, _, index)| index).collect()
 }
 
 pub fn detected_paths(capture: &CaptureResult) -> Result<Vec<String>, String> {
     let mut readers = capture.readers()?;
-    let mut lines: Vec<&LineMeta> = capture.timeline.iter().collect();
-    lines.sort_by_key(|line| Reverse(line.score));
     let mut seen = HashSet::new();
     let mut output = Vec::new();
-    for line in lines.into_iter().take(100) {
+    for index in top_indices(capture.timeline.iter().enumerate(), 100) {
+        let line = &capture.timeline[index];
         let clean = readers.read_display_line(line)?;
         for token in clean.split_whitespace() {
             let candidate = token.trim_matches(|character: char| {
@@ -243,29 +213,25 @@ pub fn suggested_keywords(
     let mut seen = HashSet::new();
     let mut output = Vec::new();
     let diff_context = is_diff_context(command);
-    let mut lines: Vec<&LineMeta> = capture.timeline.iter().collect();
-    lines.retain(|line| {
-        (diff_context && line.reasons.iter().any(|reason| reason == "structure/diff"))
+    let eligible = capture.timeline.iter().enumerate().filter(|(_, line)| {
+        (diff_context && line.has(line_flag::DIFF))
             || (capture.exit_code != 0
-                && line.reasons.iter().any(|reason| {
-                    matches!(
-                        reason.as_str(),
-                        "outcome/failure"
-                            | "severity/error"
-                            | "failed test"
-                            | "warning"
-                            | "numeric anomaly"
-                    )
-                }))
+                && line.has(
+                    line_flag::FAILURE
+                        | line_flag::ERROR
+                        | line_flag::FAILED_TEST
+                        | line_flag::WARNING
+                        | line_flag::NUMERIC_ANOMALY,
+                ))
     });
-    lines.sort_by_key(|line| Reverse(line.score));
     let mut readers = capture.readers()?;
-    for line in lines.into_iter().take(24) {
+    for index in top_indices(eligible, 24) {
+        let line = &capture.timeline[index];
         let clean = readers.read_display_line(line)?;
         if is_serialized_payload_line(&clean) {
             continue;
         }
-        let is_diff = line.reasons.iter().any(|reason| reason == "structure/diff");
+        let is_diff = line.has(line_flag::DIFF);
         let candidates = if is_diff && diff_context {
             diff_search_term(&clean).into_iter().collect()
         } else if capture.exit_code != 0 && is_diagnostic_evidence(&clean) {
@@ -545,12 +511,12 @@ fn score_line(
     total: usize,
     exit_code: i32,
     keywords: &[String],
-) -> (i64, Vec<String>) {
+) -> (i64, u32) {
     let lower = clean.to_lowercase();
     let trimmed = lower.trim_start();
     let tokens = lexical_tokens(&lower);
     let mut score = 0_i64;
-    let mut reasons = Vec::new();
+    let mut flags = 0_u32;
     let successful_check = (trimmed.starts_with("ok ") && trimmed.contains(" - "))
         || (trimmed.starts_with("test ") && trimmed.ends_with(" ... ok"));
     let successful_outcome = is_success_outcome(trimmed);
@@ -560,31 +526,21 @@ fn score_line(
         || trimmed.starts_with("b-");
     if is_failure_outcome(trimmed) {
         score += 220;
-        reasons.push("outcome/failure".to_string());
+        flags |= line_flag::FAILURE;
     } else if successful_outcome {
         score += 180;
-        reasons.push("outcome/success".to_string());
+        flags |= line_flag::SUCCESS;
     } else if successful_check {
         score += 20;
-        reasons.push("successful check".to_string());
+        flags |= line_flag::SUCCESSFUL_CHECK;
     }
     if trimmed.starts_with("diff --git ") {
         score += 140;
-        reasons.push("structure/diff".to_string());
+        flags |= line_flag::DIFF;
     }
-    let severe = [
-        "fatal",
-        "error",
-        "failure",
-        "failed",
-        "panic",
-        "exception",
-        "traceback",
-        "timeout",
-    ];
     if !successful
         && !diff_content
-        && (severe.iter().any(|word| tokens.contains(*word))
+        && (tokens.has(token::SEVERE)
             || has_runtime_exception(trimmed)
             || [
                 "permission denied",
@@ -596,99 +552,174 @@ fn score_line(
             .any(|phrase| lower.contains(phrase)))
     {
         score += 100;
-        reasons.push("severity/error".to_string());
+        flags |= line_flag::ERROR;
     }
-    if !successful
-        && tokens.contains("test")
-        && (tokens.contains("fail") || tokens.contains("failed"))
-    {
+    if !successful && tokens.has(token::TEST) && tokens.has(token::FAIL | token::FAILED) {
         score += 70;
-        reasons.push("failed test".to_string());
+        flags |= line_flag::FAILED_TEST;
     }
-    if !successful && !diff_content && (tokens.contains("warning") || lower.contains("warn:")) {
+    if !successful && !diff_content && (tokens.has(token::WARNING) || lower.contains("warn:")) {
         score += 40;
-        reasons.push("warning".to_string());
+        flags |= line_flag::WARNING;
     }
     if score < 80
         && ["note", "remark", "info"]
             .iter()
-            .any(|word| tokens.contains(*word))
+            .any(|word| tokens.contains_known(word))
     {
         score += 5;
-        reasons.push("note/info".to_string());
+        flags |= line_flag::NOTE;
     }
     for keyword in keywords {
-        if !successful && !keyword.is_empty() && util::unicode_contains_ci(clean, keyword) {
+        if !successful && !keyword.is_empty() && lower.contains(keyword) {
             score += 80;
-            reasons.push(format!("keyword:{keyword}"));
+            flags |= line_flag::KEYWORD;
         }
     }
     if is_path_like(clean) {
         score += 30;
-        reasons.push("file/path".to_string());
+        flags |= line_flag::PATH;
     }
     if is_metric_line(&lower) {
         score += 25;
-        reasons.push("metric/table-like".to_string());
+        flags |= line_flag::METRIC;
     }
-    if tokens.contains("todo") || tokens.contains("pira") {
+    if tokens.has(token::TODO | token::PIRA) {
         score += 20;
-        reasons.push("TODO/PIRA marker".to_string());
+        flags |= line_flag::MARKER;
     }
     if lower.contains(" at ")
         || lower.trim_start().starts_with("at ")
         || lower.contains("stack backtrace")
     {
         score += 15;
-        reasons.push("stack/frame".to_string());
+        flags |= line_flag::STACK;
     }
     if stream == StreamKind::Stderr && !is_progress_noise(&lower) {
         score += 10;
-        reasons.push("stderr".to_string());
+        flags |= line_flag::STDERR;
     }
     let position = position_boost(line_number, total);
     if position > 0 {
         score += position;
-        reasons.push(format!("position+{position}"));
+        flags |= line_flag::POSITION;
     }
     if exit_code != 0
         && line_number + 5 > total
         && (stream == StreamKind::Stderr
-            || ["exit", "fail", "failed", "error"]
-                .iter()
-                .any(|word| tokens.contains(*word)))
+            || tokens.has(token::EXIT | token::FAIL | token::FAILED | token::ERROR))
     {
         score += 20;
-        reasons.push("nonzero-exit tail".to_string());
+        flags |= line_flag::NONZERO_TAIL;
     }
     if !successful && has_structured_numeric_anomaly(&tokens, &lower) {
         score += 35;
-        reasons.push("numeric anomaly".to_string());
+        flags |= line_flag::NUMERIC_ANOMALY;
     }
-    let token_bonus = tokens
-        .iter()
-        .filter(|token| !is_stopword(token))
-        .count()
-        .min(10) as i64;
+    let token_bonus = tokens.informative as i64;
     score += token_bonus;
     if token_bonus > 0 {
-        reasons.push("informativeness".to_string());
+        flags |= line_flag::INFORMATIVE;
     }
-    (score, reasons)
+    (score, flags)
 }
 
-fn lexical_tokens(value: &str) -> HashSet<String> {
-    value
+struct TokenFacts {
+    bits: u32,
+    informative: usize,
+}
+
+impl TokenFacts {
+    fn has(&self, flags: u32) -> bool {
+        self.bits & flags != 0
+    }
+
+    fn contains_known(&self, value: &str) -> bool {
+        self.has(token::flag(value))
+    }
+}
+
+mod token {
+    pub const FATAL: u32 = 1 << 0;
+    pub const ERROR: u32 = 1 << 1;
+    pub const FAILURE: u32 = 1 << 2;
+    pub const FAILED: u32 = 1 << 3;
+    pub const PANIC: u32 = 1 << 4;
+    pub const EXCEPTION: u32 = 1 << 5;
+    pub const TRACEBACK: u32 = 1 << 6;
+    pub const TIMEOUT: u32 = 1 << 7;
+    pub const TEST: u32 = 1 << 8;
+    pub const FAIL: u32 = 1 << 9;
+    pub const WARNING: u32 = 1 << 10;
+    pub const NOTE: u32 = 1 << 11;
+    pub const REMARK: u32 = 1 << 12;
+    pub const INFO: u32 = 1 << 13;
+    pub const TODO: u32 = 1 << 14;
+    pub const PIRA: u32 = 1 << 15;
+    pub const EXIT: u32 = 1 << 16;
+    pub const NAN: u32 = 1 << 17;
+    pub const INF: u32 = 1 << 18;
+    pub const INFINITY: u32 = 1 << 19;
+    pub const OVERFLOW: u32 = 1 << 20;
+    pub const UNDERFLOW: u32 = 1 << 21;
+    pub const SEVERE: u32 =
+        FATAL | ERROR | FAILURE | FAILED | PANIC | EXCEPTION | TRACEBACK | TIMEOUT;
+    pub const ANOMALY: u32 = NAN | INF | INFINITY | OVERFLOW | UNDERFLOW;
+
+    pub fn flag(value: &str) -> u32 {
+        match value {
+            "fatal" => FATAL,
+            "error" => ERROR,
+            "failure" => FAILURE,
+            "failed" => FAILED,
+            "panic" => PANIC,
+            "exception" => EXCEPTION,
+            "traceback" => TRACEBACK,
+            "timeout" => TIMEOUT,
+            "test" => TEST,
+            "fail" => FAIL,
+            "warning" => WARNING,
+            "note" => NOTE,
+            "remark" => REMARK,
+            "info" => INFO,
+            "todo" => TODO,
+            "pira" => PIRA,
+            "exit" => EXIT,
+            "nan" => NAN,
+            "inf" => INF,
+            "infinity" => INFINITY,
+            "overflow" => OVERFLOW,
+            "underflow" => UNDERFLOW,
+            _ => 0,
+        }
+    }
+}
+
+fn lexical_tokens(value: &str) -> TokenFacts {
+    let mut bits = 0_u32;
+    let mut informative = [""; 10];
+    let mut informative_count = 0_usize;
+    for value in value
         .split(|character: char| !character.is_alphanumeric() && character != '_')
-        .filter(|token| !token.is_empty())
-        .map(ToString::to_string)
-        .collect()
+        .filter(|value| !value.is_empty())
+    {
+        bits |= token::flag(value);
+        if informative_count < informative.len()
+            && !is_stopword(value)
+            && !informative[..informative_count].contains(&value)
+        {
+            informative[informative_count] = value;
+            informative_count += 1;
+        }
+    }
+    TokenFacts {
+        bits,
+        informative: informative_count,
+    }
 }
 
-fn has_structured_numeric_anomaly(tokens: &HashSet<String>, lower: &str) -> bool {
-    ["nan", "inf", "infinity", "overflow", "underflow"]
-        .iter()
-        .any(|token| tokens.contains(*token))
+fn has_structured_numeric_anomaly(tokens: &TokenFacts, lower: &str) -> bool {
+    tokens.has(token::ANOMALY)
         && (is_metric_line(lower)
             || lower.contains("=nan")
             || lower.contains(": nan")
@@ -762,23 +793,21 @@ fn is_progress_noise(lower: &str) -> bool {
 }
 
 fn is_metric_line(lower: &str) -> bool {
-    let keys = [
-        "accuracy",
-        "loss",
-        "metric",
-        "score",
-        "auc",
-        "f1",
-        "precision",
-        "recall",
-        "passed",
-        "failed",
-        "result",
-    ];
-    let has_key = keys.iter().any(|key| {
-        lower
-            .split(|c: char| !c.is_alphanumeric())
-            .any(|token| token == *key)
+    let has_key = lower.split(|c: char| !c.is_alphanumeric()).any(|token| {
+        matches!(
+            token,
+            "accuracy"
+                | "loss"
+                | "metric"
+                | "score"
+                | "auc"
+                | "f1"
+                | "precision"
+                | "recall"
+                | "passed"
+                | "failed"
+                | "result"
+        )
     });
     has_key && lower.chars().any(|character| character.is_ascii_digit())
 }
@@ -863,7 +892,7 @@ mod tests {
 
     #[test]
     fn successful_test_name_is_not_a_diagnostic() {
-        let (_, reasons) = score_line(
+        let (_, flags) = score_line(
             "ok 39 - error beats noise",
             StreamKind::Stdout,
             39,
@@ -871,14 +900,14 @@ mod tests {
             1,
             &[],
         );
-        assert!(reasons.iter().any(|reason| reason == "successful check"));
-        assert!(!reasons.iter().any(|reason| reason == "severity/error"));
-        assert!(!reasons.iter().any(|reason| reason == "failed test"));
+        assert_ne!(flags & line_flag::SUCCESSFUL_CHECK, 0);
+        assert_eq!(flags & line_flag::ERROR, 0);
+        assert_eq!(flags & line_flag::FAILED_TEST, 0);
     }
 
     #[test]
     fn actual_test_failure_is_an_outcome() {
-        let (_, reasons) = score_line(
+        let (_, flags) = score_line(
             "not ok 72 - direct transform count mismatch",
             StreamKind::Stdout,
             72,
@@ -886,12 +915,12 @@ mod tests {
             1,
             &[],
         );
-        assert!(reasons.iter().any(|reason| reason == "outcome/failure"));
+        assert_ne!(flags & line_flag::FAILURE, 0);
     }
 
     #[test]
     fn successful_result_does_not_trigger_failed_test() {
-        let (_, reasons) = score_line(
+        let (_, flags) = score_line(
             "test result: ok. 11 passed; 0 failed",
             StreamKind::Stdout,
             10,
@@ -899,13 +928,13 @@ mod tests {
             0,
             &[],
         );
-        assert!(reasons.iter().any(|reason| reason == "outcome/success"));
-        assert!(!reasons.iter().any(|reason| reason == "failed test"));
+        assert_ne!(flags & line_flag::SUCCESS, 0);
+        assert_eq!(flags & line_flag::FAILED_TEST, 0);
     }
 
     #[test]
     fn rust_test_harness_success_is_not_a_diagnostic() {
-        let (_, reasons) = score_line(
+        let (_, flags) = score_line(
             "test parser::failed_input_is_rejected ... ok",
             StreamKind::Stdout,
             8,
@@ -913,8 +942,8 @@ mod tests {
             0,
             &[],
         );
-        assert!(reasons.iter().any(|reason| reason == "successful check"));
-        assert!(!reasons.iter().any(|reason| reason == "severity/error"));
+        assert_ne!(flags & line_flag::SUCCESSFUL_CHECK, 0);
+        assert_eq!(flags & line_flag::ERROR, 0);
     }
 
     #[test]
@@ -1017,7 +1046,7 @@ mod tests {
                 offset: 0,
                 length: 1,
                 score: if line == 1 { 100 } else { 20 },
-                reasons: vec!["successful check".into()],
+                flags: line_flag::SUCCESSFUL_CHECK,
             })
             .collect::<Vec<_>>();
         assert!(select_important(&lines, 2).contains(&4));

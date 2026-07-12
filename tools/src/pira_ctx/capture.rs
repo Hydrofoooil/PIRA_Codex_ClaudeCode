@@ -1,16 +1,21 @@
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::thread;
-use std::time::SystemTime;
+use std::time::{Instant, SystemTime};
 
 use sha2::{Digest, Sha256};
 
 use crate::model::{CaptureResult, LineMeta, StreamKind, TempSpool};
-use crate::{spawn_command, summarize, util};
+use crate::{spawn_command, util};
 
-const MAX_CAPTURE_LINES: usize = 2_000_000;
+const DEFAULT_MAX_RETAINED_BYTES: u64 = 512 * 1024 * 1024;
+const DEFAULT_MAX_INDEXED_LINES: usize = 1_000_000;
+const HARD_MAX_INDEXED_LINES: usize = 2_000_000;
+const LINE_CHANNEL_CAPACITY: usize = 4096;
 
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
@@ -25,6 +30,7 @@ struct StreamLine {
 #[derive(Debug)]
 struct StreamAnalysis {
     length: u64,
+    observed_length: u64,
     sha256: [u8; 32],
     binary: bool,
     non_utf8: bool,
@@ -36,13 +42,36 @@ struct CollectedLines {
     stdout: usize,
     stderr: usize,
     truncated: bool,
-    exceeded_limit: bool,
 }
 
-pub fn capture_command(
-    cmd: &[String],
-    keywords: &[String],
-) -> Result<Result<CaptureResult, i32>, String> {
+struct RetentionBudget {
+    maximum: u64,
+    used: AtomicU64,
+}
+
+impl RetentionBudget {
+    fn reserve(&self, requested: usize) -> usize {
+        let requested = requested as u64;
+        let mut used = self.used.load(Ordering::Relaxed);
+        loop {
+            if used >= self.maximum {
+                return 0;
+            }
+            let granted = requested.min(self.maximum - used);
+            match self.used.compare_exchange_weak(
+                used,
+                used + granted,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return granted as usize,
+                Err(actual) => used = actual,
+            }
+        }
+    }
+}
+
+pub fn capture_command(cmd: &[String]) -> Result<Result<CaptureResult, i32>, String> {
     if cmd.is_empty() {
         return Err(crate::cli::USAGE.to_string());
     }
@@ -53,7 +82,23 @@ pub fn capture_command(
         .display()
         .to_string();
     let start = SystemTime::now();
+    let elapsed = Instant::now();
     let start_ms = util::millis(start);
+    let retained_limit = configured_u64(
+        "PIRA_CTX_MAX_RETAINED_BYTES",
+        DEFAULT_MAX_RETAINED_BYTES,
+        4 * 1024,
+    );
+    let indexed_line_limit = configured_usize(
+        "PIRA_CTX_MAX_INDEXED_LINES",
+        DEFAULT_MAX_INDEXED_LINES,
+        1_000,
+        HARD_MAX_INDEXED_LINES,
+    );
+    let budget = Arc::new(RetentionBudget {
+        maximum: retained_limit,
+        used: AtomicU64::new(0),
+    });
     let (mut stdout_spool, stdout_file) = create_spool("stdout", start_ms)?;
     let (mut stderr_spool, stderr_file) = create_spool("stderr", start_ms)?;
     let mut child = match spawn_command(cmd) {
@@ -76,14 +121,29 @@ pub fn capture_command(
         .stderr
         .take()
         .ok_or_else(|| "failed to capture stderr".to_string())?;
-    let (sender, receiver) = mpsc::channel::<StreamLine>();
+    let (sender, receiver) = mpsc::sync_channel::<StreamLine>(LINE_CHANNEL_CAPACITY);
     let stdout_sender = sender.clone();
+    let stdout_budget = Arc::clone(&budget);
     let stdout_handle = thread::spawn(move || {
-        read_stream(child_stdout, stdout_file, StreamKind::Stdout, stdout_sender)
+        read_stream(
+            child_stdout,
+            stdout_file,
+            StreamKind::Stdout,
+            stdout_sender,
+            &stdout_budget,
+        )
     });
-    let stderr_handle =
-        thread::spawn(move || read_stream(child_stderr, stderr_file, StreamKind::Stderr, sender));
-    let collector_handle = thread::spawn(move || collect_lines(receiver));
+    let stderr_budget = Arc::clone(&budget);
+    let stderr_handle = thread::spawn(move || {
+        read_stream(
+            child_stderr,
+            stderr_file,
+            StreamKind::Stderr,
+            sender,
+            &stderr_budget,
+        )
+    });
+    let collector_handle = thread::spawn(move || collect_lines(receiver, indexed_line_limit));
 
     let status = child.wait().map_err(|error| error.to_string())?;
     let end_ms = util::millis(SystemTime::now());
@@ -92,14 +152,12 @@ pub fn capture_command(
     let collected = collector_handle
         .join()
         .map_err(|_| "line collector panicked".to_string())?;
-    if collected.exceeded_limit {
-        return Err(format!(
-            "capture exceeded the {MAX_CAPTURE_LINES}-line safety limit; reduce or pre-filter the child output"
-        ));
-    }
+    let retention_truncated = stdout_analysis.observed_length > stdout_analysis.length
+        || stderr_analysis.observed_length > stderr_analysis.length;
     let stdout = TempSpool {
         path: stdout_spool.disarm(),
         length: stdout_analysis.length,
+        observed_length: stdout_analysis.observed_length,
         sha256: stdout_analysis.sha256,
         binary: stdout_analysis.binary,
         non_utf8: stdout_analysis.non_utf8,
@@ -107,30 +165,31 @@ pub fn capture_command(
     let stderr = TempSpool {
         path: stderr_spool.disarm(),
         length: stderr_analysis.length,
+        observed_length: stderr_analysis.observed_length,
         sha256: stderr_analysis.sha256,
         binary: stderr_analysis.binary,
         non_utf8: stderr_analysis.non_utf8,
     };
     let exit_code = util::status_code(status);
-    let mut capture = CaptureResult {
+    let capture = CaptureResult {
         stdout,
         stderr,
         timeline: collected.timeline,
         total_lines: collected.total,
         stdout_lines: collected.stdout,
         stderr_lines: collected.stderr,
-        timeline_truncated: collected.truncated,
+        timeline_truncated: collected.truncated || retention_truncated,
+        retention_truncated,
         exit_code,
         start_ms,
         end_ms,
-        duration_ms: end_ms.saturating_sub(start_ms),
+        duration_ms: elapsed.elapsed().as_millis(),
         cwd,
     };
-    summarize::score_timeline(&mut capture, keywords)?;
     Ok(Ok(capture))
 }
 
-fn collect_lines(receiver: mpsc::Receiver<StreamLine>) -> CollectedLines {
+fn collect_lines(receiver: mpsc::Receiver<StreamLine>, maximum: usize) -> CollectedLines {
     let mut timeline = Vec::new();
     let mut total = 0_usize;
     let mut stdout = 0_usize;
@@ -147,9 +206,9 @@ fn collect_lines(receiver: mpsc::Receiver<StreamLine>) -> CollectedLines {
             offset: event.offset,
             length: event.length,
             score: 0,
-            reasons: Vec::new(),
+            flags: 0,
         };
-        if timeline.len() < MAX_CAPTURE_LINES {
+        if timeline.len() < maximum {
             timeline.push(line);
         }
     }
@@ -158,8 +217,7 @@ fn collect_lines(receiver: mpsc::Receiver<StreamLine>) -> CollectedLines {
         total,
         stdout,
         stderr,
-        truncated: false,
-        exceeded_limit: total > MAX_CAPTURE_LINES,
+        truncated: total > maximum,
     }
 }
 
@@ -216,11 +274,13 @@ fn read_stream<R: Read>(
     mut input: R,
     mut output: File,
     stream: StreamKind,
-    sender: mpsc::Sender<StreamLine>,
+    sender: mpsc::SyncSender<StreamLine>,
+    budget: &RetentionBudget,
 ) -> io::Result<StreamAnalysis> {
     let mut buffer = [0_u8; 64 * 1024];
     let mut hasher = Sha256::new();
     let mut offset = 0_u64;
+    let mut observed = 0_u64;
     let mut line_start = 0_u64;
     let mut null_seen = false;
     let mut controls = 0_u64;
@@ -230,7 +290,12 @@ fn read_stream<R: Read>(
         if count == 0 {
             break;
         }
-        let chunk = &buffer[..count];
+        observed = observed.saturating_add(count as u64);
+        let retained = budget.reserve(count);
+        if retained == 0 {
+            continue;
+        }
+        let chunk = &buffer[..retained];
         output.write_all(chunk)?;
         hasher.update(chunk);
         validator.feed(chunk);
@@ -250,7 +315,7 @@ fn read_stream<R: Read>(
                 line_start = end;
             }
         }
-        offset += count as u64;
+        offset += retained as u64;
     }
     if line_start < offset {
         let _ = sender.send(StreamLine {
@@ -264,10 +329,25 @@ fn read_stream<R: Read>(
     let digest: [u8; 32] = hasher.finalize().into();
     Ok(StreamAnalysis {
         length: offset,
+        observed_length: observed,
         sha256: digest,
         binary: null_seen || (offset > 0 && controls.saturating_mul(100) / offset > 30),
         non_utf8: validator.finish(),
     })
+}
+
+fn configured_u64(name: &str, default: u64, minimum: u64) -> u64 {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map_or(default, |value| value.max(minimum))
+}
+
+fn configured_usize(name: &str, default: usize, minimum: usize, maximum: usize) -> usize {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .map_or(default, |value| value.clamp(minimum, maximum))
 }
 
 #[derive(Default)]

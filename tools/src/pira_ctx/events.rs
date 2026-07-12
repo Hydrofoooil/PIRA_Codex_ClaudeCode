@@ -11,7 +11,7 @@ use crate::{model::Metadata, storage, util};
 const MAX_EVENT_BYTES: u64 = 64 * 1024;
 
 #[cfg(unix)]
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::OpenOptionsExt;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Event {
@@ -56,7 +56,9 @@ pub fn record(
         }),
     };
     let dir = event_dir(store, &workspace_hash);
-    private_dir(&dir)?;
+    storage::ensure_private_dir(store)?;
+    storage::ensure_private_dir(&store.join("events"))?;
+    storage::ensure_private_dir(&dir)?;
     let name = format!(
         "{}-{}-{}.json",
         event.timestamp_ms,
@@ -95,10 +97,7 @@ pub fn read_current(store: &Path, limit: usize) -> Result<Vec<Event>, String> {
     paths.reverse();
     let mut out = Vec::new();
     for path in paths.into_iter().take(limit) {
-        if path
-            .metadata()
-            .is_ok_and(|metadata| metadata.len() <= MAX_EVENT_BYTES)
-            && let Ok(bytes) = fs::read(path)
+        if let Ok(bytes) = util::read_file_limited(&path, MAX_EVENT_BYTES, "event")
             && let Ok(event) = serde_json::from_slice(&bytes)
         {
             out.push(event)
@@ -215,10 +214,17 @@ fn category(command: &[String]) -> String {
 }
 fn observed(exit: i32, metadata: Option<&Metadata>) -> String {
     if let Some(m) = metadata {
-        format!(
-            "command exited {exit}; {} lines and {} bytes captured",
-            m.total_lines, m.total_bytes
-        )
+        if m.retention_truncated {
+            format!(
+                "command exited {exit}; {} lines and {} of {} observed bytes retained",
+                m.total_lines, m.total_bytes, m.observed_total_bytes
+            )
+        } else {
+            format!(
+                "command exited {exit}; {} lines and {} bytes captured",
+                m.total_lines, m.total_bytes
+            )
+        }
     } else if exit == 0 {
         "command exited 0; output was not captured".into()
     } else {
@@ -232,13 +238,6 @@ fn short_nonce() -> u64 {
         ^ u64::from(std::process::id())
         ^ EVENT_COUNTER.fetch_add(1, Ordering::Relaxed)
 }
-fn private_dir(path: &Path) -> Result<(), String> {
-    fs::create_dir_all(path).map_err(|e| e.to_string())?;
-    #[cfg(unix)]
-    fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(|e| e.to_string())?;
-    Ok(())
-}
-
 fn cap_event_count(dir: &Path, maximum: usize) -> Result<(), String> {
     let mut paths: Vec<_> = fs::read_dir(dir)
         .map_err(|e| e.to_string())?

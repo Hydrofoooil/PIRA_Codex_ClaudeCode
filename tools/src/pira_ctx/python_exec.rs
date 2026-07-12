@@ -11,16 +11,18 @@ use crate::storage::StoredResult;
 #[cfg(unix)]
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 
-const BOOTSTRAP: &str = r#"import pathlib, sys
+const BOOTSTRAP: &str = r#"import sys
 msg_path, stdout_path, stderr_path, msg_id, msg_exit, code_path, source_name = sys.argv[1:8]
-MSG_BYTES = pathlib.Path(msg_path).read_bytes()
+with open(msg_path, "rb") as _f:
+    MSG_BYTES = _f.read()
 MSG = MSG_BYTES.decode("utf-8", "replace")
 MSG_PATH = msg_path
 MSG_STDOUT_PATH = stdout_path
 MSG_STDERR_PATH = stderr_path
 MSG_ID = msg_id
 MSG_EXIT = int(msg_exit)
-source = pathlib.Path(code_path).read_bytes()
+with open(code_path, "rb") as _f:
+    source = _f.read()
 scope = {
     "__name__": "__main__",
     "__file__": source_name,
@@ -35,6 +37,8 @@ scope = {
 sys.argv = [source_name]
 exec(compile(source, source_name, "exec"), scope, scope)
 "#;
+const DEFAULT_MAX_EXEC_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_ANALYSIS_CODE_BYTES: u64 = 1024 * 1024;
 
 pub struct PreparedExec {
     _workspace: PrivateWorkspace,
@@ -44,6 +48,16 @@ pub struct PreparedExec {
 pub fn prepare(config: &Config, source: &StoredResult) -> Result<PreparedExec, String> {
     if source.metadata.timeline_truncated {
         return Err("cannot construct merged MSG from a result with a truncated line index".into());
+    }
+    let maximum = std::env::var("PIRA_CTX_MAX_EXEC_BYTES")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map_or(DEFAULT_MAX_EXEC_BYTES, |value| value.max(4 * 1024));
+    if source.metadata.total_bytes > maximum {
+        return Err(format!(
+            "capture is {} bytes; exec materialization is limited to {maximum} bytes by PIRA_CTX_MAX_EXEC_BYTES; use search/transform or raise the limit deliberately",
+            source.metadata.total_bytes
+        ));
     }
     let mut command = resolve_python(config)?;
     let workspace = PrivateWorkspace::create()?;
@@ -56,12 +70,16 @@ pub fn prepare(config: &Config, source: &StoredResult) -> Result<PreparedExec, S
     let (code, source_name) = match (&config.exec_code, &config.exec_file) {
         (Some(code), None) => (code.as_bytes().to_vec(), "<pira_ctx-exec>".to_string()),
         (None, Some(path)) => (
-            fs::read(path)
-                .map_err(|error| format!("read analysis file {}: {error}", path.display()))?,
+            crate::util::read_file_limited(path, MAX_ANALYSIS_CODE_BYTES, "analysis file")?,
             path.display().to_string(),
         ),
         _ => return Err("choose exactly one --code CODE or --file PATH".into()),
     };
+    if code.len() as u64 > MAX_ANALYSIS_CODE_BYTES {
+        return Err(format!(
+            "analysis code exceeds the {MAX_ANALYSIS_CODE_BYTES}-byte limit"
+        ));
+    }
     write_private(&code_path, &code)?;
 
     command.extend([

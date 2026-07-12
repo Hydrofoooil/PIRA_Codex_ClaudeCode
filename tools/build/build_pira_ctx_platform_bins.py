@@ -178,7 +178,8 @@ def require_release_inputs() -> None:
     required = [
         TOOLS_DIR / "Cargo.toml",
         TOOLS_DIR / "Cargo.lock",
-        TOOLS_DIR / "src" / "bin" / "pira_ctx.rs",
+        TOOLS_DIR / "src" / "pira_ctx" / "lib.rs",
+        TOOLS_DIR / "src" / "pira_ctx" / "main.rs",
     ]
     missing = [path for path in required if not path.is_file()]
     if missing:
