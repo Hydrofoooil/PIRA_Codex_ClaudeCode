@@ -97,3 +97,14 @@
   - setup_pira_claude.py：import 块删"treat them as loaded, do not re-read"指令；已重新编译并在新 fakehome 全流程验证通过。
 - 维持现状（用户确认）：采纳声明、安全评估禁用的范围界定（保留不sudo/可逆优先/破坏性征得同意）、代码风格措辞、融合取舍。
 - [02:45 补充] 用户裁定：回答风格**不覆盖** SOUL.md 的简洁默认——展开式讲解是"完整解决问题"对该用户的应有含义，与简洁默认并行不悖。USER.md 已改：风格小节删去"覆盖 SOUL.md"措辞，Working Preferences 优先级声明中移除 SOUL.md（现仅 TOOLS/CODING_STYLE 被覆写，SOUL 完整生效）。
+
+### [2026-07-17 03:39][Claude] 配置 SessionStart hook 与 CLAUDE.md 维护规则
+
+**做了什么**
+- `/home/maoting/.claude/settings.json`（备份 .bak.20260717033*）新增 SessionStart hook，matcher 覆盖 startup/resume/compact：git 定位仓库根，存在 `WORKLOG/WORKLOG.md` 则将索引全文注入上下文（附"按规范读对应任务日志"引导语），否则静默退出。命令为纯只读。
+- 端到端验证通过：`claude -p` 新会话准确报出注入索引中的任务名；jq 校验三个 matcher 的 JSON 结构 OK。注意 hook 是启动时快照，已开着的会话不生效。
+- `/home/maoting/.claude/CLAUDE.md` 写的原则第 5 条（通读后压缩）追加：压缩时顺带核对项目级 CLAUDE.md，把沉淀的稳定事实同步进去、修正过时记载；仅限事实性内容。
+
+**关键决策与发现**
+- 原方案"在与 PIRA 的关系里加'维护授权'例外条款"被用户否决（嫌新增规则间冲突），改为把 CLAUDE.md 维护绑进 WORKLOG 压缩流程——压缩时点恰好刚通读完任务史，是判断"哪些事实该沉淀进说明书"的最佳时机。
+- 开工不读 WORKLOG 的问题定性：提示词规则是概率性的，元问题（验 token）跳过属合理裁量；hook 把"自觉"变"机制"。
