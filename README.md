@@ -8,6 +8,8 @@ PIRA is designed to be warm, honest about uncertainty, evidence-first when evide
 
 PIRA has been tested extensively with **Codex on GPT-5.4, GPT-5.5, and 5.6-sol, each with high reasoning effort**.
 
+PIRA also installs for **Claude Code** through a dedicated setup path; see [Claude Code](#claude-code). That integration is functional but newer and has received lighter testing than the Codex path.
+
 ## Quick start
 
 PIRA installs to `~/agent` by default. Setup is idempotent, backs up user-level Codex files before editing them, supports dry-run and verification modes, and is safe to rerun. Git is required; the setup wrapper handles Python discovery and can offer platform-specific installation help.
@@ -153,6 +155,48 @@ The setup script:
 8. Verifies the setup, including the PIRA verification token and installed native tool.
 
 If setup cannot safely handle an existing conflicting file or Codex setting, it stops or skips that action with a warning instead of silently overwriting it.
+
+</details>
+
+## Claude Code
+
+PIRA's policy files are agent-agnostic, and Claude Code can load them every session through its memory-import mechanism. The Claude Code setup maintains a clearly marked, PIRA-managed block inside the user memory file `~/.claude/CLAUDE.md`. The block uses Claude Code's `@path` import syntax to load `AGENTS.md`, `SOUL.md`, `TOOLS.md`, and `USER.md` at session start; the optional modules keep loading on demand through the routing rules in `AGENTS.md`. Existing content in `~/.claude/CLAUDE.md` is preserved, only the marked block is created or replaced, and edited files are backed up first.
+
+macOS/Linux:
+
+```bash
+if [ -d ~/agent/.git ]; then cd ~/agent && git pull --ff-only; else git clone https://github.com/AlgebraLoveme/PIRA.git ~/agent && cd ~/agent; fi && assets/scripts/setup_pira_claude.sh --yes --execution-mode soft-safe --user-mode placeholder --legacy remove
+```
+
+Windows PowerShell:
+
+```powershell
+if (Test-Path "$HOME/agent/.git") { Set-Location "$HOME/agent"; git pull --ff-only; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } } else { git clone https://github.com/AlgebraLoveme/PIRA.git "$HOME/agent"; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; Set-Location "$HOME/agent" }; powershell.exe -ExecutionPolicy Bypass -File assets/scripts/setup_pira_claude.ps1 --yes --execution-mode soft-safe --user-mode placeholder --legacy remove
+```
+
+<details>
+<summary>Execution modes, verification, and differences from the Codex integration</summary>
+
+### Execution mode
+
+The Claude Code execution modes map onto `permissions.defaultMode` in `~/.claude/settings.json`. Other settings in that file are preserved; if the file is not valid JSON, permission settings are left unchanged with a warning.
+
+| Option | Claude Code settings | Use when |
+| --- | --- | --- |
+| `--execution-mode safe` | `permissions.defaultMode = "default"` | You want Claude Code to keep asking before sensitive actions. |
+| `--execution-mode soft-safe` | `permissions.defaultMode = "bypassPermissions"` | You want convenience and accept full-permission risk. Claude Code's own documentation recommends isolated environments for this mode; PIRA's explicit safety rules in `TOOLS.md` are the operating guardrail, not a sandbox. |
+| `--execution-mode keep` | Leaves permission settings unchanged. | You already manage Claude Code permissions yourself. |
+
+### Shared behavior and options
+
+`--verify`, `--dry-run`, `--yes`, `--agent-dir`, `--user-mode`, `--legacy`, `--skip-tools`, and `--tools-install-dir` behave exactly as in the Codex setup, and the agent directory, `USER.md` handling, legacy cleanup, and bundled `pira_ctx` installation are the same shared steps. Use `--claude-dir PATH` to target a non-default Claude Code configuration directory and `--skip-claude` to leave Claude Code configuration untouched.
+
+### Differences from the Codex integration
+
+- Claude Code does not read `AGENTS.md` natively, so the managed block in `~/.claude/CLAUDE.md` imports it explicitly. If `USER.md` is missing and `--user-mode keep` is selected, its import is omitted with a warning; rerun setup after creating it.
+- Claude Code loads user memory, including the PIRA imports, into most subagents automatically; its built-in Explore and Plan agents intentionally skip memory files and therefore run without the PIRA bootstrap.
+- Audio notifications are not supported for Claude Code; the `--audio` options exist only in the Codex setup.
+- Both integrations can coexist on the same machine: they read the same `~/agent` policy files, and each is configured independently.
 
 </details>
 
@@ -355,7 +399,7 @@ PIRA can run in soft-safe full-permission mode, but it is not a sandbox. Its saf
 - avoid destructive commands without explicit permission;
 - keep temporary artifacts in the platform temp directory unless the user wants them preserved.
 
-Subagents should load the same bootstrap policy as the main agent. This is handled by Codex but has not been tested on other agents.
+Subagents should load the same bootstrap policy as the main agent. This is handled by Codex but has not been tested on other agents. On Claude Code, user memory including the PIRA imports reaches most subagents, but the built-in Explore and Plan agents skip memory files by design.
 
 </details>
 
