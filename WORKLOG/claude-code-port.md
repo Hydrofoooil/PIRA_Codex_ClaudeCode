@@ -19,7 +19,8 @@
 - 用户决策记录：保留 WORKLOG（融合 workbook）、保留 git add、压缩按 PIRA（合并保留）、允许绝对路径、SOUL 不动+风格进 USER.md、数学写文件**禁用**、安全评估打印**完全禁用**、代码风格仓库优先、pira_ctx 包裹保留。
 - **已于 2026-07-17 03:03 在本机真实安装**：`setup_pira_claude.sh --yes --execution-mode keep --user-mode keep --legacy remove`，五项验证 PASS。产物：~/agent → 本仓库软链；~/.claude/CLAUDE.md 追加托管 import 块（改前备份 .bak.20260717030316354692）；权限设置未动；pira_ctx 0.8.0 装到 ~/.local/bin，PATH 写入 ~/.zprofile 和 ~/.zshrc。
 - 待用户在新会话验证：问 verification token（31415926535897932384626433832795）确认 SOUL 加载；问"项目记忆写到哪"确认 WORKLOG 裁定生效。
-- 未做/待办：`.ps1` wrapper 未在真实 Windows 上跑过；音频通知未移植；模块转 skills 留作可选增强；仓库改动未 commit（等用户决定）。
+- **已于 2026-07-17 03:08 提交并推送到用户 fork**（https://github.com/Hydrofoooil/PIRA_Codex_ClaudeCode，remote 名 `fork`，origin 仍指上游 AlgebraLoveme/PIRA）：commit 6e56dea（feat: Claude Code setup path，可回馈上游）+ 2819ece（chore: 本 fork 个人化——用户主动解除 USER.md/WORKLOG 的 gitignore 并入库）。仓库根 CLAUDE.md（开发指引）保持本地未跟踪。
+- 未做/待办：`.ps1` wrapper 未在真实 Windows 上跑过；音频通知未移植；模块转 skills 留作可选增强。
 
 ### 关键文件索引
 - `AGENTS.md` — PIRA bootstrap+模块路由，内容与 agent 无关，两种集成共用
