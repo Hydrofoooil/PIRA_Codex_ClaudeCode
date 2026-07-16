@@ -200,6 +200,57 @@ The Claude Code execution modes map onto `permissions.defaultMode` in `~/.claude
 
 </details>
 
+### Optional: auto-inject a project memory index (SessionStart hook)
+
+If you keep a per-project memory index — for example a `WORKLOG/WORKLOG.md` task index at the repository root — a rule like "read the worklog before starting work" is followed only probabilistically, because instruction files are requests to the model, not triggers. A Claude Code `SessionStart` hook makes it deterministic: whatever the hook command prints is injected into the model's context at session startup, on resume, and right after context compaction, so the index is always in front of the model without relying on compliance.
+
+Merge the following into `~/.claude/settings.json` (keep your existing keys; back the file up first):
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "r=$(git rev-parse --show-toplevel 2>/dev/null) || r=$PWD; f=\"$r/WORKLOG/WORKLOG.md\"; if [ -f \"$f\" ]; then echo \"[SessionStart hook] Project WORKLOG index follows; per the logging rules, identify the current task and read its task log:\"; cat \"$f\"; fi; exit 0",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "r=$(git rev-parse --show-toplevel 2>/dev/null) || r=$PWD; f=\"$r/WORKLOG/WORKLOG.md\"; if [ -f \"$f\" ]; then echo \"[SessionStart hook] Project WORKLOG index follows; per the logging rules, identify the current task and read its task log:\"; cat \"$f\"; fi; exit 0",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "r=$(git rev-parse --show-toplevel 2>/dev/null) || r=$PWD; f=\"$r/WORKLOG/WORKLOG.md\"; if [ -f \"$f\" ]; then echo \"[SessionStart hook] Project WORKLOG index follows; per the logging rules, identify the current task and read its task log:\"; cat \"$f\"; fi; exit 0",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Notes:
+
+- The command locates the repository root with git, prints the index only when `WORKLOG/WORKLOG.md` exists, and exits silently otherwise. It is read-only. Adjust the announcement line and the index path to your own memory layout.
+- Hooks are snapshotted at session start: already-open sessions are unaffected; new sessions pick the hook up. Use `/hooks` inside Claude Code to review, edit, or disable it later.
+- Verify end-to-end from a project that has an index: `claude -p "name the first task in the injected WORKLOG index"`.
+
 ## `pira_ctx`: lightweight command context
 
 <details>

@@ -108,3 +108,8 @@
 **关键决策与发现**
 - 原方案"在与 PIRA 的关系里加'维护授权'例外条款"被用户否决（嫌新增规则间冲突），改为把 CLAUDE.md 维护绑进 WORKLOG 压缩流程——压缩时点恰好刚通读完任务史，是判断"哪些事实该沉淀进说明书"的最佳时机。
 - 开工不读 WORKLOG 的问题定性：提示词规则是概率性的，元问题（验 token）跳过属合理裁量；hook 把"自觉"变"机制"。
+
+### [2026-07-17 03:44][Claude] README 记录 SessionStart hook 配置步骤
+
+**做了什么**
+- README.md 的 Claude Code 章节末尾新增 "Optional: auto-inject a project memory index (SessionStart hook)" 小节：动机（指令文件是请求非触发器）、可直接粘贴的 settings.json 配置（startup/resume/compact 三个 matcher，注入语改为英文通用版）、三条注意事项（只读/启动快照需新会话/claude -p 端到端验证法）。
