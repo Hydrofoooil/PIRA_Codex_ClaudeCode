@@ -28,13 +28,13 @@ This command:
 macOS/Linux:
 
 ```bash
-if [ -d ~/agent/.git ]; then cd ~/agent && git pull --ff-only; else git clone https://github.com/AlgebraLoveme/PIRA.git ~/agent && cd ~/agent; fi && assets/scripts/setup_pira.sh --yes --execution-mode soft-safe --audio no --user-mode placeholder --global-agents link --legacy remove
+if [ -d ~/agent/.git ]; then cd ~/agent && git pull --ff-only; else git clone https://github.com/Hydrofoooil/PIRA_Codex_ClaudeCode.git ~/agent && cd ~/agent; fi && assets/scripts/setup_pira.sh --yes --execution-mode soft-safe --audio no --user-mode placeholder --global-agents link --legacy remove
 ```
 
 Windows PowerShell:
 
 ```powershell
-if (Test-Path "$HOME/agent/.git") { Set-Location "$HOME/agent"; git pull --ff-only; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } } else { git clone https://github.com/AlgebraLoveme/PIRA.git "$HOME/agent"; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; Set-Location "$HOME/agent" }; powershell.exe -ExecutionPolicy Bypass -File assets/scripts/setup_pira.ps1 --yes --execution-mode soft-safe --audio no --user-mode placeholder --global-agents link --legacy remove
+if (Test-Path "$HOME/agent/.git") { Set-Location "$HOME/agent"; git pull --ff-only; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } } else { git clone https://github.com/Hydrofoooil/PIRA_Codex_ClaudeCode.git "$HOME/agent"; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; Set-Location "$HOME/agent" }; powershell.exe -ExecutionPolicy Bypass -File assets/scripts/setup_pira.ps1 --yes --execution-mode soft-safe --audio no --user-mode placeholder --global-agents link --legacy remove
 ```
 
 If you are rerunning setup and want a missing `USER.md` to stay missing, use `--user-mode keep` instead.
@@ -60,7 +60,7 @@ Set-Location "$HOME/agent"; git pull --ff-only; if ($LASTEXITCODE -ne 0) { exit 
 Use this path if you want to preview setup before writing anything:
 
 ```bash
-git clone https://github.com/AlgebraLoveme/PIRA.git ~/agent
+git clone https://github.com/Hydrofoooil/PIRA_Codex_ClaudeCode.git ~/agent
 cd ~/agent
 assets/scripts/setup_pira.sh --dry-run
 assets/scripts/setup_pira.sh
@@ -165,13 +165,13 @@ PIRA's policy files are agent-agnostic, and Claude Code can load them every sess
 macOS/Linux:
 
 ```bash
-if [ -d ~/agent/.git ]; then cd ~/agent && git pull --ff-only; else git clone https://github.com/AlgebraLoveme/PIRA.git ~/agent && cd ~/agent; fi && assets/scripts/setup_pira_claude.sh --yes --execution-mode soft-safe --user-mode placeholder --legacy remove
+if [ -d ~/agent/.git ]; then cd ~/agent && git pull --ff-only; else git clone https://github.com/Hydrofoooil/PIRA_Codex_ClaudeCode.git ~/agent && cd ~/agent; fi && assets/scripts/setup_pira_claude.sh --yes --execution-mode soft-safe --user-mode placeholder --legacy remove
 ```
 
 Windows PowerShell:
 
 ```powershell
-if (Test-Path "$HOME/agent/.git") { Set-Location "$HOME/agent"; git pull --ff-only; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } } else { git clone https://github.com/AlgebraLoveme/PIRA.git "$HOME/agent"; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; Set-Location "$HOME/agent" }; powershell.exe -ExecutionPolicy Bypass -File assets/scripts/setup_pira_claude.ps1 --yes --execution-mode soft-safe --user-mode placeholder --legacy remove
+if (Test-Path "$HOME/agent/.git") { Set-Location "$HOME/agent"; git pull --ff-only; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } } else { git clone https://github.com/Hydrofoooil/PIRA_Codex_ClaudeCode.git "$HOME/agent"; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; Set-Location "$HOME/agent" }; powershell.exe -ExecutionPolicy Bypass -File assets/scripts/setup_pira_claude.ps1 --yes --execution-mode soft-safe --user-mode placeholder --legacy remove
 ```
 
 <details>
