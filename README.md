@@ -17,6 +17,7 @@ PIRA installs to `~/agent` by default. Setup is idempotent, backs up user-level 
 ### Recommended one-line install or update
 
 This command:
+
 - uses the existing `~/agent` git checkout when present, otherwise clones PIRA into `~/agent`;
 - enables **soft-safe** mode;
 - keeps audio notifications **off**;
@@ -28,13 +29,13 @@ This command:
 macOS/Linux:
 
 ```bash
-if [ -d ~/agent/.git ]; then cd ~/agent && git pull --ff-only; else git clone https://github.com/Hydrofoooil/PIRA_Codex_ClaudeCode.git ~/agent && cd ~/agent; fi && assets/scripts/setup_pira.sh --yes --execution-mode soft-safe --audio no --user-mode placeholder --global-agents link --legacy remove
+if [ -d ~/agent/.git ]; then cd ~/agent && git pull --ff-only; else git clone https://github.com/Hydrofoooil/PIRA_Codex_ClaudeCode.git ~/agent && cd ~/agent; fi && assets/scripts/setup_pira.sh --yes --execution-mode keep --audio no --user-mode placeholder --global-agents link --legacy remove
 ```
 
 Windows PowerShell:
 
 ```powershell
-if (Test-Path "$HOME/agent/.git") { Set-Location "$HOME/agent"; git pull --ff-only; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } } else { git clone https://github.com/Hydrofoooil/PIRA_Codex_ClaudeCode.git "$HOME/agent"; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; Set-Location "$HOME/agent" }; powershell.exe -ExecutionPolicy Bypass -File assets/scripts/setup_pira.ps1 --yes --execution-mode soft-safe --audio no --user-mode placeholder --global-agents link --legacy remove
+if (Test-Path "$HOME/agent/.git") { Set-Location "$HOME/agent"; git pull --ff-only; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } } else { git clone https://github.com/Hydrofoooil/PIRA_Codex_ClaudeCode.git "$HOME/agent"; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; Set-Location "$HOME/agent" }; powershell.exe -ExecutionPolicy Bypass -File assets/scripts/setup_pira.ps1 --yes --execution-mode keep --audio no --user-mode placeholder --global-agents link --legacy remove
 ```
 
 If you are rerunning setup and want a missing `USER.md` to stay missing, use `--user-mode keep` instead.
@@ -42,13 +43,13 @@ If you are rerunning setup and want a missing `USER.md` to stay missing, use `--
 macOS/Linux:
 
 ```bash
-cd ~/agent && git pull --ff-only && assets/scripts/setup_pira.sh --yes --execution-mode soft-safe --audio no --user-mode keep --global-agents link --legacy remove
+cd ~/agent && git pull --ff-only && assets/scripts/setup_pira.sh --yes --execution-mode keep --audio no --user-mode keep --global-agents link --legacy remove
 ```
 
 Windows PowerShell:
 
 ```powershell
-Set-Location "$HOME/agent"; git pull --ff-only; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; powershell.exe -ExecutionPolicy Bypass -File assets/scripts/setup_pira.ps1 --yes --execution-mode soft-safe --audio no --user-mode keep --global-agents link --legacy remove
+Set-Location "$HOME/agent"; git pull --ff-only; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; powershell.exe -ExecutionPolicy Bypass -File assets/scripts/setup_pira.ps1 --yes --execution-mode keep --audio no --user-mode keep --global-agents link --legacy remove
 ```
 
 `git pull --ff-only` updates an existing checkout only when Git can do so without a merge. If you have tracked local edits or a divergent branch, it stops for manual review.
@@ -84,33 +85,33 @@ The script asks before sensitive choices in interactive mode. For unattended set
 
 ### Execution mode
 
-| Option | Codex settings | Use when |
-| --- | --- | --- |
-| `--execution-mode safe` | `approval_policy = "on-request"`, `sandbox_mode = "workspace-write"` | You want a real approval/sandbox boundary. |
-| `--execution-mode soft-safe` | `approval_policy = "never"`, `sandbox_mode = "danger-full-access"` | You want convenience and accept full-permission risk. |
-| `--execution-mode keep` | Leaves existing approval/sandbox settings unchanged. | You already manage Codex permissions yourself. |
+| Option                         | Codex settings                                                           | Use when                                              |
+| ------------------------------ | ------------------------------------------------------------------------ | ----------------------------------------------------- |
+| `--execution-mode safe`      | `approval_policy = "on-request"`, `sandbox_mode = "workspace-write"` | You want a real approval/sandbox boundary.            |
+| `--execution-mode soft-safe` | `approval_policy = "never"`, `sandbox_mode = "danger-full-access"`   | You want convenience and accept full-permission risk. |
+| `--execution-mode keep`      | Leaves existing approval/sandbox settings unchanged.                     | You already manage Codex permissions yourself.        |
 
 ### `USER.md` mode
 
-| Option | Behavior |
-| --- | --- |
-| `--user-mode placeholder` | Creates a private placeholder `USER.md` when it is missing. Existing `USER.md` is preserved. |
-| `--user-mode keep` | Leaves `USER.md` exactly as-is; if it is missing, setup leaves it missing. |
-| `--user-mode interactive` | Asks what to do when `USER.md` is missing. |
+| Option                      | Behavior                                                                                        |
+| --------------------------- | ----------------------------------------------------------------------------------------------- |
+| `--user-mode placeholder` | Creates a private placeholder`USER.md` when it is missing. Existing `USER.md` is preserved. |
+| `--user-mode keep`        | Leaves`USER.md` exactly as-is; if it is missing, setup leaves it missing.                     |
+| `--user-mode interactive` | Asks what to do when`USER.md` is missing.                                                     |
 
 ### Other useful flags
 
-| Option | Behavior |
-| --- | --- |
-| `--yes` | Accepts setup confirmations. It does **not** enable audio unless `--audio yes` is also set. |
-| `--audio yes\|no\|ask` | Controls optional Codex audio notifications. Use `--audio no` for a quiet install. |
-| `--global-agents link\|copy\|skip\|ask` | Controls whether `~/.codex/AGENTS.md` points to PIRA by symlink, copy, or not at all. |
-| `--legacy remove\|keep\|ask` | Controls paths listed in `assets/LEGACY_LIST.md`; `remove` moves active legacy files into `.backup/setup_pira_legacy/`. |
-| `--agent-dir PATH` | Installs against a path other than `~/agent`. |
-| `--skip-tools` | Skips installation or refresh of bundled native PIRA tools. |
-| `--tools-install-dir PATH` | Overrides the per-user tools directory (`~/.local/bin` on macOS/Linux or `%LOCALAPPDATA%\PIRA\bin` on Windows). |
-| `--verify` | Checks the current setup without writing. |
-| `--dry-run` | Prints planned changes without applying them. |
+| Option                                 | Behavior                                                                                                                     |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `--yes`                              | Accepts setup confirmations. It does**not** enable audio unless `--audio yes` is also set.                           |
+| `--audio yes\|no\|ask`                 | Controls optional Codex audio notifications. Use`--audio no` for a quiet install.                                          |
+| `--global-agents link\|copy\|skip\|ask` | Controls whether`~/.codex/AGENTS.md` points to PIRA by symlink, copy, or not at all.                                       |
+| `--legacy remove\|keep\|ask`           | Controls paths listed in`assets/LEGACY_LIST.md`; `remove` moves active legacy files into `.backup/setup_pira_legacy/`. |
+| `--agent-dir PATH`                   | Installs against a path other than`~/agent`.                                                                               |
+| `--skip-tools`                       | Skips installation or refresh of bundled native PIRA tools.                                                                  |
+| `--tools-install-dir PATH`           | Overrides the per-user tools directory (`~/.local/bin` on macOS/Linux or `%LOCALAPPDATA%\PIRA\bin` on Windows).          |
+| `--verify`                           | Checks the current setup without writing.                                                                                    |
+| `--dry-run`                          | Prints planned changes without applying them.                                                                                |
 
 ### Install or refresh only the PIRA tools
 
@@ -165,13 +166,13 @@ PIRA's policy files are agent-agnostic, and Claude Code can load them every sess
 macOS/Linux:
 
 ```bash
-if [ -d ~/agent/.git ]; then cd ~/agent && git pull --ff-only; else git clone https://github.com/Hydrofoooil/PIRA_Codex_ClaudeCode.git ~/agent && cd ~/agent; fi && assets/scripts/setup_pira_claude.sh --yes --execution-mode soft-safe --user-mode placeholder --legacy remove
+if [ -d ~/agent/.git ]; then cd ~/agent && git pull --ff-only; else git clone https://github.com/Hydrofoooil/PIRA_Codex_ClaudeCode.git ~/agent && cd ~/agent; fi && assets/scripts/setup_pira_claude.sh --yes --execution-mode keep --user-mode placeholder --legacy remove
 ```
 
 Windows PowerShell:
 
 ```powershell
-if (Test-Path "$HOME/agent/.git") { Set-Location "$HOME/agent"; git pull --ff-only; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } } else { git clone https://github.com/Hydrofoooil/PIRA_Codex_ClaudeCode.git "$HOME/agent"; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; Set-Location "$HOME/agent" }; powershell.exe -ExecutionPolicy Bypass -File assets/scripts/setup_pira_claude.ps1 --yes --execution-mode soft-safe --user-mode placeholder --legacy remove
+if (Test-Path "$HOME/agent/.git") { Set-Location "$HOME/agent"; git pull --ff-only; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } } else { git clone https://github.com/Hydrofoooil/PIRA_Codex_ClaudeCode.git "$HOME/agent"; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; Set-Location "$HOME/agent" }; powershell.exe -ExecutionPolicy Bypass -File assets/scripts/setup_pira_claude.ps1 --yes --execution-mode keep --user-mode placeholder --legacy remove
 ```
 
 <details>
@@ -181,11 +182,11 @@ if (Test-Path "$HOME/agent/.git") { Set-Location "$HOME/agent"; git pull --ff-on
 
 The Claude Code execution modes map onto `permissions.defaultMode` in `~/.claude/settings.json`. Other settings in that file are preserved; if the file is not valid JSON, permission settings are left unchanged with a warning.
 
-| Option | Claude Code settings | Use when |
-| --- | --- | --- |
-| `--execution-mode safe` | `permissions.defaultMode = "default"` | You want Claude Code to keep asking before sensitive actions. |
-| `--execution-mode soft-safe` | `permissions.defaultMode = "bypassPermissions"` | You want convenience and accept full-permission risk. Claude Code's own documentation recommends isolated environments for this mode; PIRA's explicit safety rules in `TOOLS.md` are the operating guardrail, not a sandbox. |
-| `--execution-mode keep` | Leaves permission settings unchanged. | You already manage Claude Code permissions yourself. |
+| Option                         | Claude Code settings                              | Use when                                                                                                                                                                                                                      |
+| ------------------------------ | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--execution-mode safe`      | `permissions.defaultMode = "default"`           | You want Claude Code to keep asking before sensitive actions.                                                                                                                                                                 |
+| `--execution-mode soft-safe` | `permissions.defaultMode = "bypassPermissions"` | You want convenience and accept full-permission risk. Claude Code's own documentation recommends isolated environments for this mode; PIRA's explicit safety rules in`TOOLS.md` are the operating guardrail, not a sandbox. |
+| `--execution-mode keep`      | Leaves permission settings unchanged.             | You already manage Claude Code permissions yourself.                                                                                                                                                                          |
 
 ### Shared behavior and options
 
@@ -285,13 +286,13 @@ Security checks are separate from ordinary functional tests and run as fixed, no
 
 `pira_ctx` was informed by [Context Mode](https://github.com/mksglu/context-mode), especially its ideas of keeping raw tool output out of context, attaching intent to execution, retrieving indexed evidence after compaction, and analyzing stored output with small programs. We thank its contributors for publishing and explaining these ideas.
 
-| Dimension | `pira_ctx` | Context Mode |
-|---|---|---|
-| Integration | Native wrapper for explicit external commands | MCP server plus platform plugins and hooks |
-| Runtime and storage | One Rust executable and self-contained checked capture files | Node/Bun integration with a SQLite FTS5 knowledge base |
-| Reach | Commands deliberately routed through the wrapper | Broader shell, file, web, and MCP routing where integrations support it |
-| Continuity | Bounded same-session recap after compaction | Explicit session lifecycle and continuation support |
-| Safety scope | Preserves caller permissions; does not sandbox children | Adds sandbox and permission-policy integration |
+| Dimension           | `pira_ctx`                                                 | Context Mode                                                            |
+| ------------------- | ------------------------------------------------------------ | ----------------------------------------------------------------------- |
+| Integration         | Native wrapper for explicit external commands                | MCP server plus platform plugins and hooks                              |
+| Runtime and storage | One Rust executable and self-contained checked capture files | Node/Bun integration with a SQLite FTS5 knowledge base                  |
+| Reach               | Commands deliberately routed through the wrapper             | Broader shell, file, web, and MCP routing where integrations support it |
+| Continuity          | Bounded same-session recap after compaction                  | Explicit session lifecycle and continuation support                     |
+| Safety scope        | Preserves caller permissions; does not sandbox children      | Adds sandbox and permission-policy integration                          |
 
 PIRA uses `pira_ctx` when a small single-binary wrapper and exact local fallback are preferable. Context Mode is the more comprehensive option when broader interception, hooks, sandboxing, or database-backed retrieval are needed.
 
@@ -299,20 +300,20 @@ PIRA uses `pira_ctx` when a small single-binary wrapper and exact local fallback
 
 The fixed benchmark caps each category at five cases and contains **45 sanitized responses across ten categories**. Its individual fixture contents were not seen during development of the output-selection design and were not used to tune selection, scoring, thresholds, injection heuristics, or live checkpointing; the fixed runner served as a regression and final measurement gate. The table reports the final `pira_ctx 0.8.0` release candidate on that corpus:
 
-| Suite | Cases | Holdout source |
-|---|---:|---|
-| Public-repository core | 25 | New outputs generated after the freeze from ten fixed Rust repositories |
-| Remote status workloads | 15 | Previously unseen Codex outputs streamed from a remote machine after the freeze |
-| arXiv LaTeX supplement | 5 | Isolated builds of seeded recent arXiv papers, including natural and controlled failures |
+| Suite                   | Cases | Holdout source                                                                           |
+| ----------------------- | ----: | ---------------------------------------------------------------------------------------- |
+| Public-repository core  |    25 | New outputs generated after the freeze from ten fixed Rust repositories                  |
+| Remote status workloads |    15 | Previously unseen Codex outputs streamed from a remote machine after the freeze          |
+| arXiv LaTeX supplement  |     5 | Isolated builds of seeded recent arXiv papers, including natural and controlled failures |
 
 The remote importer scanned raw logs in memory and persisted only fixed-point sanitized, privacy-audited fixtures; unsanitized server output was not written locally. Final selection is independent of PIRA output: SHA-256 order with a five-case cap, while build and test categories prefer three successes and two failures. No output routing, scoring, threshold, or security behavior changed after the final reported replay.
 
-| Mode on the same 2,248,456 raw bytes | Returned context | Complete stored state | Median overhead | Immediate labeled evidence |
-|---|---:|---:|---:|---:|
-| `pira_ctx 0.8.0` automatic synopsis | 44,222 B (98.0% reduction) | 602,349 B (73.2% reduction) | +14.3 ms | 5/13 |
-| Context Mode generic passthrough | 71,621 B (96.8% reduction) | 17,039,820 B (657.8% overhead) | +16.1 ms | 9/13 |
-| `pira_ctx 0.8.0 check` | 3,064 B (99.9% reduction) | 602,484 B (73.2% reduction) | +13.2 ms | N/A—status only |
-| Context Mode `ctx_index` receipt | 7,843 B (99.7% reduction) | 13,992,387 B (522.3% overhead) | N/A—no corresponding raw baseline | 0/13 |
+| Mode on the same 2,248,456 raw bytes  |           Returned context |          Complete stored state |                    Median overhead | Immediate labeled evidence |
+| ------------------------------------- | -------------------------: | -----------------------------: | ---------------------------------: | -------------------------: |
+| `pira_ctx 0.8.0` automatic synopsis | 44,222 B (98.0% reduction) |    602,349 B (73.2% reduction) |                           +14.3 ms |                       5/13 |
+| Context Mode generic passthrough      | 71,621 B (96.8% reduction) | 17,039,820 B (657.8% overhead) |                           +16.1 ms |                       9/13 |
+| `pira_ctx 0.8.0 check`              |  3,064 B (99.9% reduction) |    602,484 B (73.2% reduction) |                           +13.2 ms |           N/A—status only |
+| Context Mode`ctx_index` receipt     |  7,843 B (99.7% reduction) | 13,992,387 B (522.3% overhead) | N/A—no corresponding raw baseline |                       0/13 |
 
 All 45 PIRA cases preserved child status, entered full automatic-summary mode, reconstructed every sanitized output exactly, and passed integrity verification. Suggestions correctly abstained in 32/32 successful unlabeled cases; immediate evidence covered 5/8 failure markers and 0/5 changed basenames. Version 0.8.0 does not change selection or scoring: the same fixed replay gives identical quality counts with 0.7.1. Context Mode generic passthrough classified all 45 recorded statuses correctly and immediately exposed 7/8 failure markers plus 2/5 changed basenames. These quality figures were not used for tuning.
 
@@ -329,18 +330,18 @@ LaTeX coverage therefore uses arXiv sources compiled inside the retained Docker 
 
 Each suite's output-quality labels were fixed during the original holdout evaluation and were not revised for 0.8.0. The visible aggregate performance figures come from the final no-tuning 0.8.0 replay of the selected 45 fixtures through one persistent automatic store and one persistent `check` store. Every call used an identical raw fixture-emitter baseline; overhead is `wrapped wall time - raw-operation wall time`, summarized by the per-case median. Stored state includes captures, indexes, and event history but excludes installed binaries and runtimes.
 
-| Held-out category | Cases | Outcomes | Immediate quality | Context reduction |
-|---|---:|---:|---:|---:|
-| File reads | 5 | 5 success | 5/5 abstentions | 99.2% |
-| GitHub pull retrieval | 5 | 5 success | 5/5 abstentions | 99.4% |
-| Search and listing | 5 | 5 success | 5/5 abstentions | 98.9% |
-| Terminal logs | 5 | 5 success | 5/5 abstentions | 95.5% |
-| Version-control diffs | 5 | 5 success | 0/5 changed basenames | 91.1% |
-| Builds | 5 | 3 success, 2 failure | 3/3 abstentions; 0/2 markers | 75.4% |
-| Test runs | 5 | 3 success, 2 failure | 3/3 abstentions; 2/2 markers | 87.9% |
-| Setup and installation | 4 | 4 success | 4/4 abstentions | 78.5% |
-| Static analysis | 1 | 1 success | 1/1 abstention | 92.5% |
-| LaTeX compilation | 5 | 1 success, 4 failure | 1/1 abstention; 3/4 markers | 94.6% |
+| Held-out category      | Cases |             Outcomes |            Immediate quality | Context reduction |
+| ---------------------- | ----: | -------------------: | ---------------------------: | ----------------: |
+| File reads             |     5 |            5 success |              5/5 abstentions |             99.2% |
+| GitHub pull retrieval  |     5 |            5 success |              5/5 abstentions |             99.4% |
+| Search and listing     |     5 |            5 success |              5/5 abstentions |             98.9% |
+| Terminal logs          |     5 |            5 success |              5/5 abstentions |             95.5% |
+| Version-control diffs  |     5 |            5 success |        0/5 changed basenames |             91.1% |
+| Builds                 |     5 | 3 success, 2 failure | 3/3 abstentions; 0/2 markers |             75.4% |
+| Test runs              |     5 | 3 success, 2 failure | 3/3 abstentions; 2/2 markers |             87.9% |
+| Setup and installation |     4 |            4 success |              4/4 abstentions |             78.5% |
+| Static analysis        |     1 |            1 success |               1/1 abstention |             92.5% |
+| LaTeX compilation      |     5 | 1 success, 4 failure |  1/1 abstention; 3/4 markers |             94.6% |
 
 #### Context Mode comparison on the final corpus
 
@@ -366,6 +367,7 @@ This remains a private implementation benchmark on one arm64 macOS evaluation ho
 Audio notifications are optional and are supported only for **Codex on macOS or Windows**. They are off by default and should not be presented as supported for Claude Code, other agent tools, Linux, or other systems.
 
 When enabled, PIRA can play:
+
 - `complete_msg.m4a` when the direct user-facing Codex agent finishes a turn; and
 - `waiting_msg.m4a` when the direct user-facing Codex agent needs confirmation, approval, or another user action.
 
